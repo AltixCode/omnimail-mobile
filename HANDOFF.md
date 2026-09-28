@@ -313,3 +313,54 @@ brew services start forgejo-runner       # restarts it as the ata user
 ```
 After that, `ps aux | grep forgejo-runner` should show `ata`, not `root`.
 
+## 11. Update (2026-09-28, once signed into App Store Connect)
+
+**Fully working end-to-end now.** With an authenticated ASC/Developer
+Portal browser session (the user's own session, running on a different
+Mac than this repo's CI -- claude-in-chrome automates whatever Chrome
+instance it's paired with, not necessarily the local machine):
+
+- **App Store Connect app record created** via the same `iris/v1/apps`
+  browser-fetch trick documented in project memory
+  `asc-app-record-creation` -- app id `6817104497`, no display-name
+  collision on "OmniMail". Bundle id `com.altixcode.omnimail` (created
+  earlier, id `JB5A6BAB24`) already had Push Notifications enabled.
+- **Internal TestFlight group created and the tester added**: group
+  "Internal Testers" (`6464aeb3-ba1c-470f-9ad7-331eead612a6`,
+  `isInternalGroup: true` confirmed on a fresh read), `atasmohammadi@gmail.com`
+  attached (betaTester id `5e79a131-9ba7-4a89-85fd-70662bc3fbaf`).
+- **iOS CI immediately went fully green end-to-end** (run 20): archive,
+  sign, export, upload -- `UPLOAD SUCCEEDED`, build 12 landed as
+  `VALID`. Confirmed via `GET /apps/{id}/builds`.
+- **Found and fixed why the build didn't auto-attach to the internal
+  group despite the CI step existing**: `pip3 install --user pyjwt
+  cryptography` in the "Auto-add build to TestFlight Internal Testers"
+  step fails on this Mac's Python 3.14 (PEP 668 "externally managed
+  environment"), and `continue-on-error: true` swallowed it completely
+  -- the job stayed green, the tester saw no build available, and had to
+  attach build 12 by hand in the ASC UI. Fixed with
+  `--break-system-packages` (same fix as `fb-idb` needed earlier this
+  session for the screenshot-automation work).
+- **Fixed the "no app icon in App Store Connect" issue**: not a build
+  problem -- the app's header icon is pulled from whichever build is
+  attached to the *App Store* version slate (Distribution -> iOS App
+  Version 1.0 -> Build), which is separate from the TestFlight build
+  list and was empty. Attached build 12 there too (Distribution page ->
+  Add Build); icon now shows correctly. This does not submit anything
+  for review, it only associates the build.
+- **iOS push (APNs) key created and uploaded to EAS**: Apple only allows
+  downloading a `.p8` once, and since developer.apple.com/authkeys was
+  reached from a *different* machine's Chrome, the file downloaded
+  there and had to be AirDropped to Atas-Mac-mini
+  (`~/Certificates/AuthKey_24T656BH84.p8`) before `eas credentials`
+  could pick it up. Key ID `24T656BH84`, environment "Sandbox &
+  Production", Team Scoped (all topics) -- fleet-reusable the same way
+  the shared iOS distribution cert is. Confirmed assigned via
+  `eas credentials` read-back (`Developer Portal ID: 24T656BH84`).
+  **Android (FCM V1) push was already done in §10** -- both platforms'
+  push notifications are now fully configured.
+
+**What's genuinely still open**: Play Console app record (next week,
+per the user), and the security/stale-session finding in §9 (still not
+independently reproduced or confirmed fixed).
+
