@@ -1,6 +1,7 @@
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
+import Constants from "expo-constants";
 import { api } from "./api";
 import { getDeviceToken, setDeviceToken } from "./storage";
 
@@ -148,7 +149,13 @@ export async function registerForPushNotificationsAsync(): Promise<PushRegistrat
   }
 
   try {
-    const pushTokenData = await Notifications.getExpoPushTokenAsync();
+    const projectId =
+      Constants?.expoConfig?.extra?.eas?.projectId ??
+      Constants?.easConfig?.projectId;
+
+    const pushTokenData = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined
+    );
     const token = pushTokenData.data;
 
     // Register with OmniMail backend
