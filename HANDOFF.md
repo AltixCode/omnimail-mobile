@@ -94,5 +94,52 @@ OmniMail Mobile is the companion mobile application for OmniMail. It connects to
 
 All automated checks passed:
 - `npx tsc --noEmit`: **0 errors**
-- `npx expo export --platform ios`: **Pass (3,039 modules bundled, 5.28 MB)**
-- `npx expo export --platform android`: **Pass (3,038 modules bundled, 5.28 MB)**
+- `npx expo export --platform ios`: **Pass (3,050 modules bundled, 5.33 MB)**
+- `npx expo export --platform android`: **Pass (3,049 modules bundled, 5.34 MB)**
+- `npx expo export --platform web`: **Pass (2,684 modules bundled, 3.05 MB)**
+
+---
+
+## 7. Push Notifications Production Setup (Apple APNs & Google FCM)
+
+For push notifications to reach **physical devices** in production, TestFlight, or standalone builds, the Apple APNs key and Google Firebase FCM v1 key must be linked to Expo / EAS.
+
+### 7.1. Apple (iOS APNs)
+1. **Enable Push Notifications Capability on App ID**:
+   - Go to [Apple Developer Portal → Identifiers](https://developer.apple.com/account/resources/identifiers/list).
+   - Find App ID: `com.altixcode.omnimail`.
+   - Under Capabilities, check **Push Notifications** and click **Save**.
+2. **Create or Reuse APNs Key (`.p8`)**:
+   - Go to [Apple Developer Portal → Keys](https://developer.apple.com/account/resources/authkeys/list).
+   - If an APNs key already exists for AltixCode, it can be shared (one key covers all apps on the developer team).
+   - If creating a new key: Click **+**, name it `AltixCode APNs Key`, check **Apple Push Notifications service (APNs)**, click **Continue** → **Register** → **Download** (`AuthKey_XXXXXXXXXX.p8`). Note the 10-character **Key ID** and your **Team ID**.
+3. **Upload Key to Expo / EAS**:
+   - From `Dev/mobile_expo_apps/omnimail`, run:
+     ```bash
+     eas credentials
+     ```
+   - Select **iOS** → **production** (or preview) → **Push Notifications Key** → upload the `.p8` file, Key ID, and Team ID.
+
+### 7.2. Google (Android FCM v1)
+1. **Firebase Console Project**:
+   - Go to [Firebase Console](https://console.firebase.google.com/) and open the AltixCode project.
+   - Click **Add App** → Select **Android**.
+   - Set package name to `com.altixcode.omnimail` and register.
+   - Download `google-services.json` into `Dev/mobile_expo_apps/omnimail/google-services.json`.
+   - In `app.json`, ensure `"googleServicesFile": "./google-services.json"` is present under `"android"`.
+2. **Generate FCM v1 Service Account Key**:
+   - In Firebase Console: Project Settings (gear icon) → **Service accounts** tab.
+   - Click **Generate new private key** to download the JSON service account key.
+3. **Upload FCM v1 Key to Expo**:
+   - Run:
+     ```bash
+     eas credentials
+     ```
+   - Select **Android** → **production** (or preview) → **FCM V1 Service Account Key** → upload the JSON file.
+
+### 7.3. Current In-App Configuration
+- `app.json` has `UIBackgroundModes: ["remote-notification", "fetch"]` configured.
+- `app.json` has `POST_NOTIFICATIONS` and `RECEIVE_BOOT_COMPLETED` declared.
+- Notifications service automatically resolves `projectId` from EAS configuration.
+- Local simulated rich notifications work out-of-the-box on simulators via Settings → **Send Test Push Notification**.
+
