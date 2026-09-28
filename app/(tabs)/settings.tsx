@@ -98,11 +98,14 @@ export default function SettingsScreen() {
           setPushToken(res.token);
           Alert.alert(
             "Push Notifications Enabled",
-            "This device has been registered to receive instant alerts when new mail arrives."
+            "This device has been registered to receive instant alerts when new mail arrives.",
           );
         } else {
           setPushEnabled(false);
-          Alert.alert("Permission Not Granted", res.error || "Could not register push token.");
+          Alert.alert(
+            "Permission Not Granted",
+            res.error || "Could not register push token.",
+          );
         }
       } catch (err: any) {
         setPushEnabled(false);
@@ -116,7 +119,10 @@ export default function SettingsScreen() {
         await unregisterDevicePushTokenAsync();
         setPushEnabled(false);
         setPushToken(null);
-        Alert.alert("Push Notifications Disabled", "Device unregistered successfully.");
+        Alert.alert(
+          "Push Notifications Disabled",
+          "Device unregistered successfully.",
+        );
       } catch (err: any) {
         Alert.alert("Error", err.message || "Failed to unregister");
       } finally {
@@ -134,20 +140,22 @@ export default function SettingsScreen() {
       await scheduleLocalRichNotification(
         "New Email: QA Verification",
         "qa@itsata.com: Test email with attachments verified successfully.",
-        { type: "new_email", accountId: accounts[0]?.id }
+        { type: "new_email", accountId: accounts[0]?.id },
       );
 
       // Also trigger server dispatch if registered
       try {
         await api.devices.testPush(
           "OmniMail Push Alert",
-          "Test push notification dispatched successfully from the server!"
+          "Test push notification dispatched successfully from the server!",
         );
       } catch {
         // If not registered with Expo push server on simulator, local rich alert was still triggered
       }
 
-      setTestPushStatus("Rich notification displayed with action buttons (Reply, Archive, Mark Read)!");
+      setTestPushStatus(
+        "Rich notification displayed with action buttons (Reply, Archive, Mark Read)!",
+      );
     } catch (err: any) {
       setTestPushStatus(`Error: ${err.message}`);
     } finally {
@@ -205,7 +213,9 @@ export default function SettingsScreen() {
               <Text style={[styles.profileName, { color: colors.textPrimary }]}>
                 {user?.name || "OmniMail User"}
               </Text>
-              <Text style={[styles.profileEmail, { color: colors.textSecondary }]}>
+              <Text
+                style={[styles.profileEmail, { color: colors.textSecondary }]}
+              >
                 {user?.email || "No email available"}
               </Text>
             </View>
@@ -225,9 +235,15 @@ export default function SettingsScreen() {
 
           <View style={styles.infoRow}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Server size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
+              <Server
+                size={18}
+                color={colors.textSecondary}
+                style={{ marginRight: 10 }}
+              />
               <View>
-                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>
+                <Text
+                  style={[styles.infoLabel, { color: colors.textSecondary }]}
+                >
                   Server URL
                 </Text>
                 <Text style={[styles.infoValue, { color: colors.textPrimary }]}>
@@ -236,7 +252,9 @@ export default function SettingsScreen() {
               </View>
             </View>
             <View style={styles.statusPill}>
-              <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
+              <View
+                style={[styles.statusDot, { backgroundColor: colors.success }]}
+              />
               <Text style={[styles.statusText, { color: colors.success }]}>
                 Connected
               </Text>
@@ -252,7 +270,12 @@ export default function SettingsScreen() {
           ]}
         >
           <View style={styles.sectionHeaderRow}>
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+            <Text
+              style={[
+                styles.sectionTitle,
+                { color: colors.textPrimary, marginBottom: 0 },
+              ]}
+            >
               Connected Accounts ({accounts.length})
             </Text>
             <TouchableOpacity
@@ -262,18 +285,33 @@ export default function SettingsScreen() {
                 { backgroundColor: colors.primaryLight },
               ]}
             >
-              <Plus size={14} color={colors.primary} style={{ marginRight: 4 }} />
-              <Text style={[styles.addAccountHeaderBtnText, { color: colors.primary }]}>
+              <Plus
+                size={14}
+                color={colors.primary}
+                style={{ marginRight: 4 }}
+              />
+              <Text
+                style={[
+                  styles.addAccountHeaderBtnText,
+                  { color: colors.primary },
+                ]}
+              >
                 Add
               </Text>
             </TouchableOpacity>
           </View>
 
           {loadingAccounts ? (
-            <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 12 }} />
+            <ActivityIndicator
+              size="small"
+              color={colors.primary}
+              style={{ marginVertical: 12 }}
+            />
           ) : accounts.length === 0 ? (
             <View style={styles.emptyAccountContainer}>
-              <Text style={[styles.emptyAccountText, { color: colors.textMuted }]}>
+              <Text
+                style={[styles.emptyAccountText, { color: colors.textMuted }]}
+              >
                 No email accounts connected yet.
               </Text>
               <Button
@@ -290,20 +328,36 @@ export default function SettingsScreen() {
                 key={acc.id}
                 style={[
                   styles.accountRow,
-                  index > 0 && { borderTopColor: colors.borderSubtle, borderTopWidth: 1 },
+                  index > 0 && {
+                    borderTopColor: colors.borderSubtle,
+                    borderTopWidth: 1,
+                  },
                 ]}
               >
-                <Mail size={18} color={colors.primary} style={{ marginRight: 10 }} />
+                <Mail
+                  size={18}
+                  color={colors.primary}
+                  style={{ marginRight: 10 }}
+                />
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.accountLabel, { color: colors.textPrimary }]}>
+                  <Text
+                    style={[styles.accountLabel, { color: colors.textPrimary }]}
+                  >
                     {acc.label}
                   </Text>
-                  <Text style={[styles.accountEmail, { color: colors.textSecondary }]}>
+                  <Text
+                    style={[
+                      styles.accountEmail,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
                     {acc.emailAddress}
                   </Text>
                 </View>
                 <View style={styles.syncStatusBadge}>
-                  <Text style={[styles.syncStatusText, { color: colors.textMuted }]}>
+                  <Text
+                    style={[styles.syncStatusText, { color: colors.textMuted }]}
+                  >
                     {acc.syncStatus === "syncing" ? "Syncing..." : "Active"}
                   </Text>
                 </View>
@@ -321,8 +375,17 @@ export default function SettingsScreen() {
         >
           <View style={styles.sectionHeaderRow}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <BellRing size={20} color={colors.primary} style={{ marginRight: 8 }} />
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+              <BellRing
+                size={20}
+                color={colors.primary}
+                style={{ marginRight: 8 }}
+              />
+              <Text
+                style={[
+                  styles.sectionTitle,
+                  { color: colors.textPrimary, marginBottom: 0 },
+                ]}
+              >
                 Push Notifications
               </Text>
             </View>
@@ -332,18 +395,32 @@ export default function SettingsScreen() {
               <Switch
                 value={pushEnabled}
                 onValueChange={handleTogglePush}
-                trackColor={{ false: colors.border, true: colors.primary }}
+                trackColor={{ false: colors.textMuted, true: colors.primary }}
+                thumbColor="#FFFFFF"
+                ios_backgroundColor={colors.textMuted}
               />
             )}
           </View>
 
-          <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
-            Receive instant push alerts whenever a new email arrives in any of your mail accounts.
+          <Text
+            style={[styles.sectionSubtitle, { color: colors.textSecondary }]}
+          >
+            Receive instant push alerts whenever a new email arrives in any of
+            your mail accounts.
           </Text>
 
           {pushToken ? (
-            <View style={[styles.tokenBox, { backgroundColor: colors.surfaceHighlight }]}>
-              <Smartphone size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />
+            <View
+              style={[
+                styles.tokenBox,
+                { backgroundColor: colors.surfaceHighlight },
+              ]}
+            >
+              <Smartphone
+                size={16}
+                color={colors.textSecondary}
+                style={{ marginRight: 6 }}
+              />
               <Text
                 numberOfLines={1}
                 style={[styles.tokenText, { color: colors.textMuted }]}
@@ -356,27 +433,27 @@ export default function SettingsScreen() {
           <View style={{ marginTop: Spacing.md }}>
             <Button
               title="Send Test Push Notification"
-                onPress={handleSendTestPush}
-                loading={sendingTestPush}
-                variant="outline"
-                size="sm"
-                icon={<Send size={15} color={colors.primary} />}
-              />
-              {testPushStatus && (
-                <Text
-                  style={[
-                    styles.testPushStatusText,
-                    {
-                      color: testPushStatus.startsWith("Error")
-                        ? colors.danger
-                        : colors.success,
-                    },
-                  ]}
-                >
-                  {testPushStatus}
-                </Text>
-              )}
-            </View>
+              onPress={handleSendTestPush}
+              loading={sendingTestPush}
+              variant="outline"
+              size="sm"
+              icon={<Send size={15} color={colors.primary} />}
+            />
+            {testPushStatus && (
+              <Text
+                style={[
+                  styles.testPushStatusText,
+                  {
+                    color: testPushStatus.startsWith("Error")
+                      ? colors.danger
+                      : colors.success,
+                  },
+                ]}
+              >
+                {testPushStatus}
+              </Text>
+            )}
+          </View>
         </View>
 
         {/* Appearance */}
@@ -388,15 +465,26 @@ export default function SettingsScreen() {
         >
           <View style={styles.sectionHeaderRow}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Moon size={20} color={colors.textSecondary} style={{ marginRight: 8 }} />
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+              <Moon
+                size={20}
+                color={colors.textSecondary}
+                style={{ marginRight: 8 }}
+              />
+              <Text
+                style={[
+                  styles.sectionTitle,
+                  { color: colors.textPrimary, marginBottom: 0 },
+                ]}
+              >
                 Dark Appearance
               </Text>
             </View>
             <Switch
               value={isDark}
               onValueChange={toggleTheme}
-              trackColor={{ false: colors.border, true: colors.primary }}
+              trackColor={{ false: colors.textMuted, true: colors.primary }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor={colors.textMuted}
             />
           </View>
         </View>

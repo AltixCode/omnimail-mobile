@@ -46,6 +46,7 @@ export default function MessageDetailScreen() {
 
   const [message, setMessage] = useState<MessageDetail | null>(null);
   const [thread, setThread] = useState<MessageDetail[]>([]);
+  const [webViewHeight, setWebViewHeight] = useState(300);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -60,6 +61,7 @@ export default function MessageDetailScreen() {
     try {
       setLoading(true);
       setError(null);
+      setWebViewHeight(300);
       const res = await api.messages.get(msgId);
       setMessage(res.message);
       setThread(res.thread || [res.message]);
@@ -76,9 +78,15 @@ export default function MessageDetailScreen() {
     }
   };
 
-  const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null);
+  const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<
+    string | null
+  >(null);
 
-  const handleOpenAttachment = async (att: { id: string; filename: string; contentType: string }) => {
+  const handleOpenAttachment = async (att: {
+    id: string;
+    filename: string;
+    contentType: string;
+  }) => {
     try {
       setDownloadingAttachmentId(att.id);
       const serverUrl = await getServerUrl();
@@ -104,14 +112,20 @@ export default function MessageDetailScreen() {
             UTI: att.contentType,
           });
         } else {
-          Alert.alert("Downloaded", `Attachment saved to device cache:\n${att.filename}`);
+          Alert.alert(
+            "Downloaded",
+            `Attachment saved to device cache:\n${att.filename}`,
+          );
         }
       } else {
         throw new Error(`Server returned HTTP ${res.status}`);
       }
     } catch (err: any) {
       console.error("Failed to open attachment:", err);
-      Alert.alert("Attachment Error", err.message || "Failed to download attachment.");
+      Alert.alert(
+        "Attachment Error",
+        err.message || "Failed to download attachment.",
+      );
     } finally {
       setDownloadingAttachmentId(null);
     }
@@ -154,24 +168,31 @@ export default function MessageDetailScreen() {
 
   const handleDelete = async () => {
     if (!message) return;
-    Alert.alert("Delete Message", "Are you sure you want to move this message to trash?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            setActionLoading(true);
-            await api.messages.delete(message.id);
-            router.back();
-          } catch (err: any) {
-            Alert.alert("Delete Failed", err.message || "Could not delete message");
-          } finally {
-            setActionLoading(false);
-          }
+    Alert.alert(
+      "Delete Message",
+      "Are you sure you want to move this message to trash?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setActionLoading(true);
+              await api.messages.delete(message.id);
+              router.back();
+            } catch (err: any) {
+              Alert.alert(
+                "Delete Failed",
+                err.message || "Could not delete message",
+              );
+            } finally {
+              setActionLoading(false);
+            }
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   const handleReply = () => {
@@ -197,7 +218,9 @@ export default function MessageDetailScreen() {
       if (message.toAddresses) {
         const toList = JSON.parse(message.toAddresses);
         if (Array.isArray(toList)) {
-          allRecipients.push(...toList.filter((e) => e !== message.account?.emailAddress));
+          allRecipients.push(
+            ...toList.filter((e) => e !== message.account?.emailAddress),
+          );
         }
       }
     } catch {}
@@ -272,6 +295,27 @@ export default function MessageDetailScreen() {
         </head>
         <body>
           ${message.bodyHtml}
+          <script>
+            function reportHeight() {
+              var h = document.body.scrollHeight;
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(String(h));
+              }
+            }
+            reportHeight();
+            window.addEventListener('load', reportHeight);
+            // Images / remote content can resize the body after the initial
+            // load event fires, so keep reporting for a couple of seconds.
+            var reportCount = 0;
+            var reportInterval = setInterval(function () {
+              reportHeight();
+              reportCount += 1;
+              if (reportCount > 10) clearInterval(reportInterval);
+            }, 300);
+            if (window.ResizeObserver) {
+              new ResizeObserver(reportHeight).observe(document.body);
+            }
+          </script>
         </body>
       </html>
     `;
@@ -279,9 +323,14 @@ export default function MessageDetailScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <SafeAreaView
+        style={[styles.container, { backgroundColor: colors.background }]}
+      >
         <View style={styles.topNav}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.navButton}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.navButton}
+          >
             <ArrowLeft size={22} color={colors.textPrimary} />
           </TouchableOpacity>
         </View>
@@ -297,9 +346,14 @@ export default function MessageDetailScreen() {
 
   if (error || !message) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <SafeAreaView
+        style={[styles.container, { backgroundColor: colors.background }]}
+      >
         <View style={styles.topNav}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.navButton}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.navButton}
+          >
             <ArrowLeft size={22} color={colors.textPrimary} />
           </TouchableOpacity>
         </View>
@@ -309,9 +363,14 @@ export default function MessageDetailScreen() {
           </Text>
           <TouchableOpacity
             onPress={() => loadMessage(id!)}
-            style={[styles.retryBtn, { backgroundColor: colors.surfaceHighlight }]}
+            style={[
+              styles.retryBtn,
+              { backgroundColor: colors.surfaceHighlight },
+            ]}
           >
-            <Text style={{ color: colors.primary, fontWeight: "600" }}>Retry</Text>
+            <Text style={{ color: colors.primary, fontWeight: "600" }}>
+              Retry
+            </Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -325,28 +384,45 @@ export default function MessageDetailScreen() {
     >
       {/* Top Nav & Quick Actions */}
       <View style={[styles.topNav, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navButton}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.navButton}
+        >
           <ArrowLeft size={22} color={colors.textPrimary} />
         </TouchableOpacity>
 
         <View style={styles.navActions}>
-          <TouchableOpacity onPress={handleToggleStar} style={styles.navActionButton}>
+          <TouchableOpacity
+            onPress={handleToggleStar}
+            style={styles.navActionButton}
+          >
             <Star
               size={20}
-              color={message.isStarred ? colors.starActive : colors.textSecondary}
+              color={
+                message.isStarred ? colors.starActive : colors.textSecondary
+              }
               fill={message.isStarred ? colors.starActive : "transparent"}
             />
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={handleToggleRead} style={styles.navActionButton}>
+          <TouchableOpacity
+            onPress={handleToggleRead}
+            style={styles.navActionButton}
+          >
             <Mail size={20} color={colors.textSecondary} />
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={handleArchive} style={styles.navActionButton}>
+          <TouchableOpacity
+            onPress={handleArchive}
+            style={styles.navActionButton}
+          >
             <Archive size={20} color={colors.textSecondary} />
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={handleDelete} style={styles.navActionButton}>
+          <TouchableOpacity
+            onPress={handleDelete}
+            style={styles.navActionButton}
+          >
             <Trash2 size={20} color={colors.danger} />
           </TouchableOpacity>
         </View>
@@ -354,7 +430,9 @@ export default function MessageDetailScreen() {
 
       <ScrollView style={styles.scrollArea}>
         {/* Email Metadata Header */}
-        <View style={[styles.metaSection, { borderBottomColor: colors.border }]}>
+        <View
+          style={[styles.metaSection, { borderBottomColor: colors.border }]}
+        >
           <Text style={[styles.subjectTitle, { color: colors.textPrimary }]}>
             {message.subject || "(No Subject)"}
           </Text>
@@ -365,10 +443,15 @@ export default function MessageDetailScreen() {
               <View
                 style={[
                   styles.badge,
-                  { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                  {
+                    backgroundColor: colors.surfaceHighlight,
+                    borderColor: colors.border,
+                  },
                 ]}
               >
-                <Text style={[styles.badgeText, { color: colors.textSecondary }]}>
+                <Text
+                  style={[styles.badgeText, { color: colors.textSecondary }]}
+                >
                   {message.account.label}
                 </Text>
               </View>
@@ -377,10 +460,15 @@ export default function MessageDetailScreen() {
               <View
                 style={[
                   styles.badge,
-                  { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                  {
+                    backgroundColor: colors.surfaceHighlight,
+                    borderColor: colors.border,
+                  },
                 ]}
               >
-                <Text style={[styles.badgeText, { color: colors.textSecondary }]}>
+                <Text
+                  style={[styles.badgeText, { color: colors.textSecondary }]}
+                >
                   {message.folder.name}
                 </Text>
               </View>
@@ -396,7 +484,9 @@ export default function MessageDetailScreen() {
               ]}
             >
               <Text style={[styles.avatarText, { color: colors.primary }]}>
-                {(message.fromName || message.fromAddress).charAt(0).toUpperCase()}
+                {(message.fromName || message.fromAddress)
+                  .charAt(0)
+                  .toUpperCase()}
               </Text>
             </View>
 
@@ -435,20 +525,26 @@ export default function MessageDetailScreen() {
                   source={{ html: getRenderHtml()! }}
                   style={[
                     styles.webView,
-                    { backgroundColor: isDark ? "#111827" : "#FFFFFF" },
+                    {
+                      height: webViewHeight,
+                      backgroundColor: isDark ? "#111827" : "#FFFFFF",
+                    },
                   ]}
                   scalesPageToFit={false}
                   scrollEnabled={false}
+                  onMessage={(event) => {
+                    const height = Number(event.nativeEvent.data);
+                    if (!Number.isNaN(height) && height > 0) {
+                      setWebViewHeight(Math.ceil(height));
+                    }
+                  }}
                 />
               )}
             </View>
           ) : (
             <Text
               selectable
-              style={[
-                styles.bodyPlaintext,
-                { color: colors.textPrimary },
-              ]}
+              style={[styles.bodyPlaintext, { color: colors.textPrimary }]}
             >
               {message.bodyText || "(No message body content)"}
             </Text>
@@ -460,12 +556,21 @@ export default function MessageDetailScreen() {
           <View
             style={[
               styles.attachmentsSection,
-              { borderTopColor: colors.border, backgroundColor: colors.surface },
+              {
+                borderTopColor: colors.border,
+                backgroundColor: colors.surface,
+              },
             ]}
           >
             <View style={styles.attachmentsHeader}>
-              <Paperclip size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />
-              <Text style={[styles.attachmentsTitle, { color: colors.textPrimary }]}>
+              <Paperclip
+                size={16}
+                color={colors.textSecondary}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[styles.attachmentsTitle, { color: colors.textPrimary }]}
+              >
                 Attachments ({message.attachments.length})
               </Text>
             </View>
@@ -479,23 +584,38 @@ export default function MessageDetailScreen() {
                   onPress={() => handleOpenAttachment(att)}
                   style={[
                     styles.attachmentItem,
-                    { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                    {
+                      backgroundColor: colors.surfaceHighlight,
+                      borderColor: colors.border,
+                    },
                   ]}
                 >
-                  <FileText size={18} color={colors.primary} style={{ marginRight: 10 }} />
+                  <FileText
+                    size={18}
+                    color={colors.primary}
+                    style={{ marginRight: 10 }}
+                  />
                   <View style={{ flex: 1 }}>
                     <Text
                       numberOfLines={1}
-                      style={[styles.attachmentFilename, { color: colors.textPrimary }]}
+                      style={[
+                        styles.attachmentFilename,
+                        { color: colors.textPrimary },
+                      ]}
                     >
                       {att.filename}
                     </Text>
-                    <Text style={[styles.attachmentMeta, { color: colors.textMuted }]}>
+                    <Text
+                      style={[
+                        styles.attachmentMeta,
+                        { color: colors.textMuted },
+                      ]}
+                    >
                       {att.size < 1024
                         ? `${att.size} B`
                         : att.size < 1024 * 1024
-                        ? `${Math.round(att.size / 1024)} KB`
-                        : `${(att.size / (1024 * 1024)).toFixed(1)} MB`}{" "}
+                          ? `${Math.round(att.size / 1024)} KB`
+                          : `${(att.size / (1024 * 1024)).toFixed(1)} MB`}{" "}
                       · {att.contentType}
                     </Text>
                   </View>
@@ -525,30 +645,57 @@ export default function MessageDetailScreen() {
       >
         <TouchableOpacity
           onPress={handleReply}
-          style={[styles.bottomActionBtn, { backgroundColor: colors.surfaceHighlight }]}
+          style={[
+            styles.bottomActionBtn,
+            { backgroundColor: colors.surfaceHighlight },
+          ]}
         >
-          <Reply size={18} color={colors.textPrimary} style={{ marginRight: 6 }} />
-          <Text style={[styles.bottomActionText, { color: colors.textPrimary }]}>
+          <Reply
+            size={18}
+            color={colors.textPrimary}
+            style={{ marginRight: 6 }}
+          />
+          <Text
+            style={[styles.bottomActionText, { color: colors.textPrimary }]}
+          >
             Reply
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           onPress={handleReplyAll}
-          style={[styles.bottomActionBtn, { backgroundColor: colors.surfaceHighlight }]}
+          style={[
+            styles.bottomActionBtn,
+            { backgroundColor: colors.surfaceHighlight },
+          ]}
         >
-          <ReplyAll size={18} color={colors.textPrimary} style={{ marginRight: 6 }} />
-          <Text style={[styles.bottomActionText, { color: colors.textPrimary }]}>
+          <ReplyAll
+            size={18}
+            color={colors.textPrimary}
+            style={{ marginRight: 6 }}
+          />
+          <Text
+            style={[styles.bottomActionText, { color: colors.textPrimary }]}
+          >
             Reply All
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           onPress={handleForward}
-          style={[styles.bottomActionBtn, { backgroundColor: colors.surfaceHighlight }]}
+          style={[
+            styles.bottomActionBtn,
+            { backgroundColor: colors.surfaceHighlight },
+          ]}
         >
-          <Forward size={18} color={colors.textPrimary} style={{ marginRight: 6 }} />
-          <Text style={[styles.bottomActionText, { color: colors.textPrimary }]}>
+          <Forward
+            size={18}
+            color={colors.textPrimary}
+            style={{ marginRight: 6 }}
+          />
+          <Text
+            style={[styles.bottomActionText, { color: colors.textPrimary }]}
+          >
             Forward
           </Text>
         </TouchableOpacity>

@@ -17,6 +17,8 @@ import {
   isTomorrow,
   isPast,
   isSameDay,
+  startOfDay,
+  isBefore,
 } from "date-fns";
 import {
   Calendar as CalendarIcon,
@@ -45,31 +47,36 @@ export default function CalendarScreen() {
   const { colors } = useTheme();
 
   const [calendars, setCalendars] = useState<Calendar[]>([]);
-  const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(null);
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(
+    null,
+  );
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchCalendarData = useCallback(async (isRefresh = false) => {
-    try {
-      if (!isRefresh) setLoading(true);
-      setError(null);
+  const fetchCalendarData = useCallback(
+    async (isRefresh = false) => {
+      try {
+        if (!isRefresh) setLoading(true);
+        setError(null);
 
-      const res = await api.calendar.get({
-        calendarId: selectedCalendarId || undefined,
-      });
+        const res = await api.calendar.get({
+          calendarId: selectedCalendarId || undefined,
+        });
 
-      setCalendars(res.calendars || []);
-      setEvents(res.events || []);
-    } catch (err: any) {
-      console.error("Calendar fetch error:", err);
-      setError(err.message || "Failed to load calendar events");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [selectedCalendarId]);
+        setCalendars(res.calendars || []);
+        setEvents(res.events || []);
+      } catch (err: any) {
+        console.error("Calendar fetch error:", err);
+        setError(err.message || "Failed to load calendar events");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [selectedCalendarId],
+  );
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -82,12 +89,25 @@ export default function CalendarScreen() {
     await fetchCalendarData(true);
   };
 
-  // Group events by day for Agenda view
+  // Group events by day for Agenda view. Only today-onward: an agenda that
+  // opens on a birthday from last April instead of today isn't useful, and
+  // isn't what "Today" in the day header should imply.
   const groupedEvents: DayGroup[] = React.useMemo(() => {
     const map = new Map<string, DayGroup>();
+    const todayStart = startOfDay(new Date());
 
-    const sortedEvents = [...events].sort(
-      (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
+    const upcomingEvents = events.filter((evt) => {
+      try {
+        const relevantEnd = parseISO(evt.endDate || evt.startDate);
+        return !isBefore(relevantEnd, todayStart);
+      } catch {
+        return true;
+      }
+    });
+
+    const sortedEvents = upcomingEvents.sort(
+      (a, b) =>
+        new Date(a.startDate).getTime() - new Date(b.startDate).getTime(),
     );
 
     for (const evt of sortedEvents) {
@@ -98,8 +118,10 @@ export default function CalendarScreen() {
         let group = map.get(dateKey);
         if (!group) {
           let displayTitle = format(startDate, "EEEE, MMMM d");
-          if (isToday(startDate)) displayTitle = `Today · ${format(startDate, "MMMM d")}`;
-          else if (isTomorrow(startDate)) displayTitle = `Tomorrow · ${format(startDate, "MMMM d")}`;
+          if (isToday(startDate))
+            displayTitle = `Today · ${format(startDate, "MMMM d")}`;
+          else if (isTomorrow(startDate))
+            displayTitle = `Tomorrow · ${format(startDate, "MMMM d")}`;
 
           group = {
             date: startDate,
@@ -143,22 +165,42 @@ export default function CalendarScreen() {
 
       {/* Calendar Filter Pills */}
       {calendars.length > 0 && (
-        <View style={[styles.calendarFilterBar, { borderBottomColor: colors.border }]}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.calendarFilterScroll}>
+        <View
+          style={[
+            styles.calendarFilterBar,
+            { borderBottomColor: colors.border },
+          ]}
+        >
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.calendarFilterScroll}
+          >
             <TouchableOpacity
               onPress={() => setSelectedCalendarId(null)}
               style={[
                 styles.calendarPill,
                 {
-                  backgroundColor: selectedCalendarId === null ? colors.primaryLight : colors.surface,
-                  borderColor: selectedCalendarId === null ? colors.primary : colors.border,
+                  backgroundColor:
+                    selectedCalendarId === null
+                      ? colors.primaryLight
+                      : colors.surface,
+                  borderColor:
+                    selectedCalendarId === null
+                      ? colors.primary
+                      : colors.border,
                 },
               ]}
             >
               <Text
                 style={[
                   styles.calendarPillText,
-                  { color: selectedCalendarId === null ? colors.primary : colors.textSecondary },
+                  {
+                    color:
+                      selectedCalendarId === null
+                        ? colors.primary
+                        : colors.textSecondary,
+                  },
                 ]}
               >
                 All Calendars
@@ -174,7 +216,9 @@ export default function CalendarScreen() {
                   style={[
                     styles.calendarPill,
                     {
-                      backgroundColor: isSelected ? colors.primaryLight : colors.surface,
+                      backgroundColor: isSelected
+                        ? colors.primaryLight
+                        : colors.surface,
                       borderColor: isSelected ? colors.primary : colors.border,
                     },
                   ]}
@@ -188,7 +232,11 @@ export default function CalendarScreen() {
                   <Text
                     style={[
                       styles.calendarPillText,
-                      { color: isSelected ? colors.primary : colors.textSecondary },
+                      {
+                        color: isSelected
+                          ? colors.primary
+                          : colors.textSecondary,
+                      },
                     ]}
                   >
                     {cal.name}
@@ -202,11 +250,24 @@ export default function CalendarScreen() {
 
       {/* Error state */}
       {error && (
-        <View style={[styles.errorBar, { backgroundColor: colors.dangerLight }]}>
-          <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text>
-          <TouchableOpacity onPress={() => fetchCalendarData()} style={styles.retryBtn}>
-            <RotateCw size={14} color={colors.danger} style={{ marginRight: 4 }} />
-            <Text style={[styles.retryText, { color: colors.danger }]}>Retry</Text>
+        <View
+          style={[styles.errorBar, { backgroundColor: colors.dangerLight }]}
+        >
+          <Text style={[styles.errorText, { color: colors.danger }]}>
+            {error}
+          </Text>
+          <TouchableOpacity
+            onPress={() => fetchCalendarData()}
+            style={styles.retryBtn}
+          >
+            <RotateCw
+              size={14}
+              color={colors.danger}
+              style={{ marginRight: 4 }}
+            />
+            <Text style={[styles.retryText, { color: colors.danger }]}>
+              Retry
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -249,7 +310,9 @@ export default function CalendarScreen() {
                   { backgroundColor: colors.surfaceHighlight },
                 ]}
               >
-                <Text style={[styles.dayHeaderText, { color: colors.textPrimary }]}>
+                <Text
+                  style={[styles.dayHeaderText, { color: colors.textPrimary }]}
+                >
                   {item.displayTitle}
                 </Text>
               </View>
@@ -270,8 +333,17 @@ export default function CalendarScreen() {
                     ]}
                   >
                     <View style={styles.eventTimeRow}>
-                      <Clock size={13} color={colors.textMuted} style={{ marginRight: 4 }} />
-                      <Text style={[styles.eventTimeText, { color: colors.textMuted }]}>
+                      <Clock
+                        size={13}
+                        color={colors.textMuted}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text
+                        style={[
+                          styles.eventTimeText,
+                          { color: colors.textMuted },
+                        ]}
+                      >
                         {formatEventTime(evt)}
                       </Text>
                       {evt.calendar?.name && (
@@ -304,7 +376,11 @@ export default function CalendarScreen() {
 
                     {evt.location ? (
                       <View style={styles.eventLocationRow}>
-                        <MapPin size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                        <MapPin
+                          size={13}
+                          color={colors.textSecondary}
+                          style={{ marginRight: 4 }}
+                        />
                         <Text
                           style={[
                             styles.eventLocationText,
