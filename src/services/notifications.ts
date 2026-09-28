@@ -20,6 +20,7 @@ Notifications.setNotificationHandler({
  * Configures interactive notification action buttons (Reply, Archive, Mark as Read)
  */
 export async function setupNotificationCategoriesAsync(): Promise<void> {
+  if (Platform.OS === "web") return;
   try {
     await Notifications.setNotificationCategoryAsync(EMAIL_NOTIFICATION_CATEGORY, [
       {
@@ -47,6 +48,30 @@ export async function setupNotificationCategoriesAsync(): Promise<void> {
   } catch (err) {
     console.warn("Could not configure notification category:", err);
   }
+}
+
+/**
+ * Triggers a local rich notification for testing on simulator or device
+ */
+export async function scheduleLocalRichNotification(
+  title: string,
+  body: string,
+  data?: Record<string, any>
+): Promise<string> {
+  await setupNotificationCategoriesAsync();
+  return await Notifications.scheduleNotificationAsync({
+    content: {
+      title,
+      body,
+      sound: "default",
+      categoryIdentifier: EMAIL_NOTIFICATION_CATEGORY,
+      data: {
+        ...(data || {}),
+        _contentAvailable: true,
+      },
+    },
+    trigger: null,
+  });
 }
 
 /**

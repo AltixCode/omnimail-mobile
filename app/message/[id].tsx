@@ -14,6 +14,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
 import { format, parseISO } from "date-fns";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import {
   ArrowLeft,
   Star,
@@ -28,9 +30,12 @@ import {
   Calendar,
   MoreVertical,
   Check,
+  Download,
+  FileText,
 } from "lucide-react-native";
 import { useTheme } from "../../src/context/ThemeContext";
 import { api } from "../../src/services/api";
+import { getServerUrl, getAuthToken } from "../../src/services/storage";
 import { MessageDetail } from "../../src/types";
 import { Spacing, Typography } from "../../src/constants/theme";
 
@@ -68,6 +73,47 @@ export default function MessageDetailScreen() {
       setError(err.message || "Failed to load email");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null);
+
+  const handleOpenAttachment = async (att: { id: string; filename: string; contentType: string }) => {
+    try {
+      setDownloadingAttachmentId(att.id);
+      const serverUrl = await getServerUrl();
+      const token = await getAuthToken();
+      const downloadUrl = `${serverUrl}/api/attachments/${att.id}`;
+
+      if (Platform.OS === "web") {
+        window.open(downloadUrl, "_blank");
+        return;
+      }
+
+      const localUri = `${FileSystem.cacheDirectory}${att.filename}`;
+
+      const res = await FileSystem.downloadAsync(downloadUrl, localUri, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (res.status === 200) {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(res.uri, {
+            mimeType: att.contentType,
+            dialogTitle: att.filename,
+            UTI: att.contentType,
+          });
+        } else {
+          Alert.alert("Downloaded", `Attachment saved to device cache:\n${att.filename}`);
+        }
+      } else {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+    } catch (err: any) {
+      console.error("Failed to open attachment:", err);
+      Alert.alert("Attachment Error", err.message || "Failed to download attachment.");
+    } finally {
+      setDownloadingAttachmentId(null);
     }
   };
 
@@ -372,16 +418,29 @@ export default function MessageDetailScreen() {
         <View style={styles.bodyContainer}>
           {message.bodyHtml ? (
             <View style={styles.webViewWrapper}>
-              <WebView
-                originWhitelist={["*"]}
-                source={{ html: getRenderHtml()! }}
-                style={[
-                  styles.webView,
-                  { backgroundColor: isDark ? "#111827" : "#FFFFFF" },
-                ]}
-                scalesPageToFit={false}
-                scrollEnabled={false}
-              />
+              {Platform.OS === "web" ? (
+                <iframe
+                  srcDoc={getRenderHtml()!}
+                  style={{
+                    width: "100%",
+                    minHeight: 240,
+                    border: "none",
+                    backgroundColor: isDark ? "#111827" : "#FFFFFF",
+                  }}
+                  sandbox="allow-same-origin allow-popups"
+                />
+              ) : (
+                <WebView
+                  originWhitelist={["*"]}
+                  source={{ html: getRenderHtml()! }}
+                  style={[
+                    styles.webView,
+                    { backgroundColor: isDark ? "#111827" : "#FFFFFF" },
+                  ]}
+                  scalesPageToFit={false}
+                  scrollEnabled={false}
+                />
+              )}
             </View>
           ) : (
             <Text
@@ -411,28 +470,45 @@ export default function MessageDetailScreen() {
               </Text>
             </View>
 
-            {message.attachments.map((att) => (
-              <View
-                key={att.id}
-                style={[
-                  styles.attachmentItem,
-                  { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
-                ]}
-              >
-                <Paperclip size={18} color={colors.primary} style={{ marginRight: 10 }} />
-                <View style={{ flex: 1 }}>
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.attachmentFilename, { color: colors.textPrimary }]}
-                  >
-                    {att.filename}
-                  </Text>
-                  <Text style={[styles.attachmentMeta, { color: colors.textMuted }]}>
-                    {Math.round(att.size / 1024)} KB · {att.contentType}
-                  </Text>
-                </View>
-              </View>
-            ))}
+            {message.attachments.map((att) => {
+              const isDownloading = downloadingAttachmentId === att.id;
+              return (
+                <TouchableOpacity
+                  key={att.id}
+                  disabled={isDownloading}
+                  onPress={() => handleOpenAttachment(att)}
+                  style={[
+                    styles.attachmentItem,
+                    { backgroundColor: colors.surfaceHighlight, borderColor: colors.border },
+                  ]}
+                >
+                  <FileText size={18} color={colors.primary} style={{ marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.attachmentFilename, { color: colors.textPrimary }]}
+                    >
+                      {att.filename}
+                    </Text>
+                    <Text style={[styles.attachmentMeta, { color: colors.textMuted }]}>
+                      {att.size < 1024
+                        ? `${att.size} B`
+                        : att.size < 1024 * 1024
+                        ? `${Math.round(att.size / 1024)} KB`
+                        : `${(att.size / (1024 * 1024)).toFixed(1)} MB`}{" "}
+                      · {att.contentType}
+                    </Text>
+                  </View>
+                  <View style={styles.downloadIconBtn}>
+                    {isDownloading ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Download size={16} color={colors.textSecondary} />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
       </ScrollView>
@@ -625,6 +701,10 @@ const styles = StyleSheet.create({
   attachmentMeta: {
     fontSize: Typography.sizes.xs,
     marginTop: 2,
+  },
+  downloadIconBtn: {
+    padding: 6,
+    marginLeft: 6,
   },
   bottomActionBar: {
     flexDirection: "row",

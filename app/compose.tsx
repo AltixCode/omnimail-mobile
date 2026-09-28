@@ -14,12 +14,16 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
 import {
   X,
   Send,
   ChevronDown,
   Check,
   Paperclip,
+  FileText,
+  Trash2,
 } from "lucide-react-native";
 import { useTheme } from "../src/context/ThemeContext";
 import { api } from "../src/services/api";
@@ -51,6 +55,14 @@ export default function ComposeScreen() {
   const [subject, setSubject] = useState<string>(params.subject || "");
   const [bodyText, setBodyText] = useState<string>(params.bodyText || "");
 
+  interface LocalAttachment {
+    name: string;
+    size: number;
+    uri: string;
+    mimeType: string;
+  }
+  const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
+
   const [sending, setSending] = useState(false);
   const [accountModalVisible, setAccountModalVisible] = useState(false);
 
@@ -72,6 +84,54 @@ export default function ComposeScreen() {
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
 
+  const formatFileSize = (bytes: number): string => {
+    if (!bytes || bytes === 0) return "0 B";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const totalAttachmentsSize = attachments.reduce((sum, a) => sum + a.size, 0);
+
+  const handlePickAttachment = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        multiple: true,
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const newItems: LocalAttachment[] = result.assets.map((asset) => ({
+          name: asset.name,
+          size: asset.size || 0,
+          uri: asset.uri,
+          mimeType: asset.mimeType || "application/octet-stream",
+        }));
+
+        const MAX_TOTAL_SIZE = 25 * 1024 * 1024; // 25MB standard email attachment limit
+        const currentSum = attachments.reduce((sum, a) => sum + a.size, 0);
+        const incomingSum = newItems.reduce((sum, a) => sum + a.size, 0);
+
+        if (currentSum + incomingSum > MAX_TOTAL_SIZE) {
+          Alert.alert(
+            "Attachment Size Exceeded",
+            "Total attachment size cannot exceed 25 MB. Please select smaller files."
+          );
+          return;
+        }
+
+        setAttachments((prev) => [...prev, ...newItems]);
+      }
+    } catch (err: any) {
+      console.warn("Error picking document:", err);
+      Alert.alert("Attachment Error", err.message || "Failed to attach file.");
+    }
+  };
+
+  const handleRemoveAttachment = (index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const handleSend = async () => {
     if (!selectedAccountId) {
       Alert.alert("Missing Account", "Please select an account to send from.");
@@ -88,6 +148,47 @@ export default function ComposeScreen() {
 
     try {
       setSending(true);
+
+      // Encode attachments to base64
+      let encodedAttachments: Array<{
+        filename: string;
+        content: string;
+        contentType: string;
+        size: number;
+      }> | undefined;
+
+      if (attachments.length > 0) {
+        encodedAttachments = await Promise.all(
+          attachments.map(async (att) => {
+            let base64Data = "";
+            if (Platform.OS === "web") {
+              const fetchRes = await fetch(att.uri);
+              const blob = await fetchRes.blob();
+              base64Data = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const resStr = (reader.result as string) || "";
+                  const commaIdx = resStr.indexOf(",");
+                  resolve(commaIdx !== -1 ? resStr.slice(commaIdx + 1) : resStr);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+              });
+            } else {
+              base64Data = await FileSystem.readAsStringAsync(att.uri, {
+                encoding: FileSystem.EncodingType.Base64,
+              });
+            }
+            return {
+              filename: att.name,
+              content: base64Data,
+              contentType: att.mimeType,
+              size: att.size,
+            };
+          })
+        );
+      }
+
       await api.messages.send({
         accountId: selectedAccountId,
         to: to.trim(),
@@ -97,11 +198,17 @@ export default function ComposeScreen() {
         inReplyTo: params.inReplyTo,
         references: params.references,
         threadId: params.threadId,
+        attachments: encodedAttachments,
       });
 
-      Alert.alert("Sent", "Your email has been sent successfully.", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      if (Platform.OS === "web") {
+        window.alert("Your email has been sent successfully.");
+        router.back();
+      } else {
+        Alert.alert("Sent", "Your email has been sent successfully.", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
+      }
     } catch (err: any) {
       console.error("Send error:", err);
       Alert.alert("Send Failed", err.message || "Failed to dispatch email. Please check your credentials.");
@@ -129,26 +236,41 @@ export default function ComposeScreen() {
           New Message
         </Text>
 
-        <TouchableOpacity
-          onPress={handleSend}
-          disabled={sending}
-          style={[
-            styles.sendButton,
-            {
-              backgroundColor: colors.primary,
-              opacity: sending ? 0.7 : 1,
-            },
-          ]}
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <>
-              <Send size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.sendButtonText}>Send</Text>
-            </>
-          )}
-        </TouchableOpacity>
+        <View style={styles.headerRightActions}>
+          <TouchableOpacity
+            onPress={handlePickAttachment}
+            disabled={sending}
+            style={[styles.attachButton, { backgroundColor: colors.surfaceHighlight }]}
+          >
+            <Paperclip size={18} color={colors.textPrimary} />
+            {attachments.length > 0 && (
+              <View style={[styles.badge, { backgroundColor: colors.primary }]}>
+                <Text style={styles.badgeText}>{attachments.length}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={handleSend}
+            disabled={sending}
+            style={[
+              styles.sendButton,
+              {
+                backgroundColor: colors.primary,
+                opacity: sending ? 0.7 : 1,
+              },
+            ]}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Send size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.sendButtonText}>Send</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       <KeyboardAvoidingView
@@ -239,6 +361,64 @@ export default function ComposeScreen() {
               onChangeText={setSubject}
             />
           </View>
+
+          {/* Attachments Section */}
+          {attachments.length > 0 && (
+            <View
+              style={[
+                styles.attachmentsContainer,
+                { backgroundColor: colors.surfaceHighlight, borderBottomColor: colors.border },
+              ]}
+            >
+              <View style={styles.attachmentsTopRow}>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Paperclip size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                  <Text style={[styles.attachmentsLabel, { color: colors.textSecondary }]}>
+                    Attachments ({attachments.length}) · {formatFileSize(totalAttachmentsSize)}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={handlePickAttachment} style={styles.addMoreBtn}>
+                  <Text style={[styles.addMoreText, { color: colors.primary }]}>+ Add more</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.attachmentsList}
+              >
+                {attachments.map((att, idx) => (
+                  <View
+                    key={idx}
+                    style={[
+                      styles.attachmentChip,
+                      { backgroundColor: colors.surface, borderColor: colors.border },
+                    ]}
+                  >
+                    <FileText size={14} color={colors.primary} style={{ marginRight: 6 }} />
+                    <View style={{ maxWidth: 120 }}>
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.attachmentChipName, { color: colors.textPrimary }]}
+                      >
+                        {att.name}
+                      </Text>
+                      <Text style={[styles.attachmentChipSize, { color: colors.textMuted }]}>
+                        {formatFileSize(att.size)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleRemoveAttachment(idx)}
+                      style={styles.removeAttachmentBtn}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <X size={14} color={colors.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          )}
 
           {/* Body Multiline Input */}
           <TextInput
@@ -427,5 +607,79 @@ const styles = StyleSheet.create({
   modalItemSubtext: {
     fontSize: Typography.sizes.xs,
     marginTop: 2,
+  },
+  headerRightActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  attachButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  badge: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: Typography.weights.bold,
+  },
+  attachmentsContainer: {
+    padding: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  attachmentsTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: Spacing.xs,
+  },
+  attachmentsLabel: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
+  },
+  addMoreBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  addMoreText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
+  },
+  attachmentsList: {
+    flexDirection: "row",
+    gap: 8,
+    paddingVertical: 2,
+  },
+  attachmentChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  attachmentChipName: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.medium,
+  },
+  attachmentChipSize: {
+    fontSize: Typography.sizes.xs - 2,
+  },
+  removeAttachmentBtn: {
+    marginLeft: 6,
+    padding: 2,
   },
 });

@@ -235,6 +235,12 @@ export const api = {
       inReplyTo?: string;
       references?: string;
       threadId?: string;
+      attachments?: Array<{
+        filename: string;
+        content: string; // base64
+        contentType: string;
+        size?: number;
+      }>;
     }): Promise<{ success: boolean; messageId?: string }> {
       return await request<{ success: boolean; messageId?: string }>(
         "/api/messages/send",
