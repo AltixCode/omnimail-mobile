@@ -35,13 +35,15 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      "expo-asset",
       [
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
           "color": "#3b82f6"
         }
-      ]
+      ],
+      "./plugins/withUIScene"
     ],
     "extra": {
       "eas": {
