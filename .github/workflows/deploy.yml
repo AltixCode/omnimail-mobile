@@ -127,7 +127,17 @@ jobs:
           LC_ALL: en_US.UTF-8
         run: |
           cd ios
-          pod install --repo-update
+          # One of the self-hosted macOS runners (Atas-Mac-mini) runs its
+          # forgejo-runner launchd daemon as root, and CocoaPods refuses to
+          # run as root by default ("You cannot run CocoaPods as root").
+          # --allow-root is safe here: this is an ephemeral CI job directory,
+          # not a shared pod cache used by anything else running as a
+          # different user.
+          if [ "$(id -u)" = "0" ]; then
+            pod install --repo-update --allow-root
+          else
+            pod install --repo-update
+          fi
 
       - name: Build & Export Signed iOS IPA
         env:
