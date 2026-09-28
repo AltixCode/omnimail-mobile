@@ -29,6 +29,7 @@ OmniMail Mobile is the companion mobile application for OmniMail. It connects to
 | Endpoint | Method | Purpose in Mobile App |
 |---|---|---|
 | `/api/auth/login` | `POST` | Authenticate with `{ email, password }`, retrieves `{ token, user }` |
+| `/api/auth/register` | `POST` | Register a new user account with `{ email, password, name? }` |
 | `/api/auth/me` | `GET` | Validates session token validity |
 | `/api/auth/logout` | `POST` | Invalidates remote session |
 | `/api/messages` | `GET` | Infinite scroll list (`page`, `limit=30`, `view`, `accountId`, `unreadOnly`, `query`) |
