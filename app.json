@@ -8,27 +8,29 @@
     "userInterfaceStyle": "automatic",
     "scheme": "omnimail",
     "splash": {
-      "backgroundColor": "#0f172a"
+      "backgroundColor": "#0f172a",
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.altixcode.omnimail",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
-        "UIBackgroundModes": [
-          "remote-notification",
-          "fetch"
-        ]
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["remote-notification", "fetch"]
       }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#0f172a"
+        "backgroundColor": "#0f172a",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "com.altixcode.omnimail",
-      "permissions": [
-        "RECEIVE_BOOT_COMPLETED",
-        "POST_NOTIFICATIONS"
-      ]
+      "permissions": ["RECEIVE_BOOT_COMPLETED", "POST_NOTIFICATIONS"]
     },
     "plugins": [
       "expo-router",
@@ -40,6 +42,11 @@
           "color": "#3b82f6"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "fbbc79c9-3810-4515-8a72-40726ce6f4e1"
+      }
+    }
   }
 }

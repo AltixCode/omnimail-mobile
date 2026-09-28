@@ -1,0 +1,673 @@
+name: Build, Release & Store Submission Pipeline
+
+on:
+  # Every push to main builds both platforms. The self-hosted macOS runners
+  # each take one job at a time, so several repos pushing at once is a queue,
+  # not a pile-up of simultaneous builds on one machine.
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target Platform'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - ios
+          - android
+      submit_to_stores:
+        description: 'Automatically submit to TestFlight / Play Store'
+        required: true
+        default: true
+        type: boolean
+      ios_runner:
+        description: 'iOS runner (self-hosted first; hosted is backup)'
+        required: true
+        default: 'self-hosted'
+        type: choice
+        options: [self-hosted, github-hosted]
+      android_runner:
+        description: 'Android runner (self-hosted first; hosted is backup)'
+        required: true
+        default: 'self-hosted'
+        type: choice
+        options: [self-hosted, github-hosted]
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.repository }}
+  # A tag build must never be interrupted; an ad-hoc push/dispatch may be --
+  # cancelling a superseded run automatically is what keeps a burst of pushes
+  # from piling up stale queued runs that never do anything but sit there.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  LANG: en_US.UTF-8
+  LC_ALL: en_US.UTF-8
+  DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+
+jobs:
+  build-ios:
+    name: iOS Build & Package
+    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'ios' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_runner == 'github-hosted' && 'macos-14' || fromJSON('["self-hosted", "macOS", "ARM64", "ios-signing"]') }}
+    outputs:
+      app_name: ${{ steps.version.outputs.app_name }}
+      app_version: ${{ steps.version.outputs.app_version }}
+      app_build: ${{ steps.version.outputs.app_build }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+    steps:
+      - name: Refuse to build if the host is short of disk
+        run: |
+          free_gb=$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')
+          echo "free on this runner: ${free_gb}G"
+          if [ "${free_gb:-0}" -lt 15 ]; then
+            echo "::error::only ${free_gb}G free — refusing to build rather than risk the host"
+            exit 1
+          fi
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clean Workspace
+        run: rm -rf build ios android
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: |
+          ulimit -n 8192
+          npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Compute Dynamic Version
+        id: version
+        run: |
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          APP_NAME='OmniMail'
+          APP_VERSION="1.0.$COMMIT_COUNT"
+          APP_BUILD="$COMMIT_COUNT"
+          TAG_NAME="v$APP_VERSION"
+
+          echo "Computed Version: $APP_NAME $APP_VERSION (Build $APP_BUILD, Tag $TAG_NAME)"
+          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "app_build=$APP_BUILD" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+          # app.config.ts reads these and overrides app.json's static
+          # ios.buildNumber / android.versionCode with them.
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
+          echo "APP_BUILD=$APP_BUILD" >> $GITHUB_ENV
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+
+      - name: Expo Prebuild iOS
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Install CocoaPods
+        env:
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Build & Export Signed iOS IPA
+        env:
+          APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_KEY_ISSUER: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER }}
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          mkdir -p build/output
+          SCHEME=$(ls ios | grep .xcodeproj | head -n 1 | sed 's/.xcodeproj//')
+          echo "Building iOS Scheme: $SCHEME"
+
+          : "${APP_STORE_CONNECT_API_KEY_CONTENT:?Missing APP_STORE_CONNECT_API_KEY_CONTENT}"
+          : "${APP_STORE_CONNECT_API_KEY_ID:?Missing APP_STORE_CONNECT_API_KEY_ID}"
+          : "${APP_STORE_CONNECT_API_KEY_ISSUER:?Missing APP_STORE_CONNECT_API_KEY_ISSUER}"
+
+          # A self-hosted runner started by launchd does not inherit the
+          # interactive session's keychain access, so `codesign` fails with
+          # errSecInternalComponent. The primary path imports the signing
+          # certificate into a job-scoped keychain instead -- created and
+          # deleted within this same job, password never needing to match
+          # anything on the machine. Three-way fallback, each guarded by its
+          # own success check, mirrors the rest of the fleet (see
+          # mobile_expo_apps/klondo/.github/workflows/deploy.yml for the full
+          # rationale of each branch).
+          P12_SIGNING_OK=0
+          if [ -n "${IOS_CERTIFICATE_P12_BASE64:-}" ]; then
+            if [ -z "${IOS_CERTIFICATE_PASSWORD:-}" ]; then
+              echo "::warning::IOS_CERTIFICATE_P12_BASE64 is set but IOS_CERTIFICATE_PASSWORD is missing -- falling back to the legacy keychain path."
+            else
+              SIGNING_KEYCHAIN="$RUNNER_TEMP/signing-$$.keychain-db"
+              SIGNING_KEYCHAIN_PW="$(openssl rand -base64 24)"
+              if printf '%s' "$IOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/signing-cert.p12" \
+                && security create-keychain -p "$SIGNING_KEYCHAIN_PW" "$SIGNING_KEYCHAIN" \
+                && security set-keychain-settings -lut 21600 "$SIGNING_KEYCHAIN" \
+                && security unlock-keychain -p "$SIGNING_KEYCHAIN_PW" "$SIGNING_KEYCHAIN" \
+                && security import "$RUNNER_TEMP/signing-cert.p12" -k "$SIGNING_KEYCHAIN" \
+                     -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security \
+                && { \
+                     for wwdr_url in \
+                       https://www.apple.com/certificateauthority/AppleWWDRCAG2.cer \
+                       https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer \
+                       https://www.apple.com/certificateauthority/AppleWWDRCAG4.cer \
+                       https://www.apple.com/certificateauthority/AppleWWDRCAG5.cer \
+                       https://www.apple.com/certificateauthority/AppleWWDRCAG6.cer \
+                     ; do
+                       curl -fsSL "$wwdr_url" -o "$RUNNER_TEMP/wwdr.cer" 2>/dev/null \
+                         && security import "$RUNNER_TEMP/wwdr.cer" -k "$SIGNING_KEYCHAIN" \
+                              -T /usr/bin/codesign -T /usr/bin/security 2>/dev/null
+                     done
+                     rm -f "$RUNNER_TEMP/wwdr.cer"
+                     true; } \
+                && security set-key-partition-list -S apple-tool:,apple:,codesign: \
+                     -s -k "$SIGNING_KEYCHAIN_PW" "$SIGNING_KEYCHAIN" >/dev/null \
+                && security list-keychains -d user -s "$SIGNING_KEYCHAIN"
+              then
+                echo "SIGNING_KEYCHAIN=$SIGNING_KEYCHAIN" >> "$GITHUB_ENV"
+                P12_SIGNING_OK=1
+                echo "Imported signing certificate into a job-scoped keychain."
+              else
+                echo "::warning::Ephemeral-keychain import failed -- falling back to the legacy login-keychain unlock."
+                security delete-keychain "$SIGNING_KEYCHAIN" 2>/dev/null || true
+              fi
+              rm -f "$RUNNER_TEMP/signing-cert.p12"
+            fi
+          fi
+
+          if [ "$P12_SIGNING_OK" != "1" ]; then
+            if [ -n "${MACOS_KEYCHAIN_PASSWORD:-}" ]; then
+              KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+              if ! security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN"; then
+                echo "::error::Failed to unlock the login keychain with MACOS_KEYCHAIN_PASSWORD. Set IOS_CERTIFICATE_P12_BASE64/IOS_CERTIFICATE_PASSWORD so this repo stops depending on any one machine's keychain password."
+                exit 1
+              fi
+              security set-key-partition-list -S apple-tool:,apple:,codesign: \
+                -s -k "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null 2>&1 || true
+              echo "::warning::Using legacy login-keychain unlock -- set IOS_CERTIFICATE_P12_BASE64/IOS_CERTIFICATE_PASSWORD to stop depending on this Mac's own password."
+            else
+              echo "::warning::Neither IOS_CERTIFICATE_P12_BASE64 nor MACOS_KEYCHAIN_PASSWORD is set. Proceeding on the assumption this Mac's keychain is already unlocked and reachable."
+            fi
+          fi
+
+          AUTH_KEY="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          printf '%s' "$APP_STORE_CONNECT_API_KEY_CONTENT" > "$AUTH_KEY"
+          chmod 600 "$AUTH_KEY"
+          if [ -f "$AUTH_KEY" ]; then
+            echo "Archiving with App Store Connect API Key..."
+            xcodebuild archive \
+              -workspace "ios/${SCHEME}.xcworkspace" \
+              -scheme "$SCHEME" \
+              -configuration Release \
+              -destination "generic/platform=iOS" \
+              -archivePath "build/${SCHEME}.xcarchive" \
+              -derivedDataPath "build/DerivedData" \
+              -allowProvisioningUpdates \
+              -authenticationKeyPath "$AUTH_KEY" \
+              -authenticationKeyID "$APP_STORE_CONNECT_API_KEY_ID" \
+              -authenticationKeyIssuerID "$APP_STORE_CONNECT_API_KEY_ISSUER" \
+              CODE_SIGN_STYLE=Automatic \
+              COMPILER_INDEX_STORE_ENABLE=NO \
+              DEVELOPMENT_TEAM="8Q8Y559285"
+          else
+            echo "Archiving with local signing..."
+            xcodebuild archive \
+              -workspace "ios/${SCHEME}.xcworkspace" \
+              -scheme "$SCHEME" \
+              -configuration Release \
+              -destination "generic/platform=iOS" \
+              -archivePath "build/${SCHEME}.xcarchive" \
+              -derivedDataPath "build/DerivedData" \
+              CODE_SIGN_STYLE=Automatic \
+              COMPILER_INDEX_STORE_ENABLE=NO \
+              DEVELOPMENT_TEAM="8Q8Y559285"
+          fi
+
+          cat << 'PLIST_EOF' > build/exportOptions.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store-connect</string>
+              <key>teamID</key>
+              <string>8Q8Y559285</string>
+              <key>signingStyle</key>
+              <string>automatic</string>
+              <key>stripSwiftSymbols</key>
+              <true/>
+              <key>uploadSymbols</key>
+              <true/>
+              <key>destination</key>
+              <string>export</string>
+          </dict>
+          </plist>
+          PLIST_EOF
+
+          if [ -f "$AUTH_KEY" ]; then
+            xcodebuild -exportArchive \
+              -archivePath "build/${SCHEME}.xcarchive" \
+              -exportPath "build/output" \
+              -exportOptionsPlist "build/exportOptions.plist" \
+              -allowProvisioningUpdates \
+              -authenticationKeyPath "$AUTH_KEY" \
+              -authenticationKeyID "$APP_STORE_CONNECT_API_KEY_ID" \
+              -authenticationKeyIssuerID "$APP_STORE_CONNECT_API_KEY_ISSUER"
+          else
+            xcodebuild -exportArchive \
+              -archivePath "build/${SCHEME}.xcarchive" \
+              -exportPath "build/output" \
+              -exportOptionsPlist "build/exportOptions.plist"
+          fi
+
+          RAW_IPA=$(find build/output -name "*.ipa" 2>/dev/null | head -n 1)
+          if [ -n "$RAW_IPA" ] && [ -f "$RAW_IPA" ]; then
+            cp "$RAW_IPA" "build/output/${APP_NAME}-${APP_VERSION}.ipa"
+            echo "Successfully generated IPA at build/output/${APP_NAME}-${APP_VERSION}.ipa"
+          else
+            echo "::error::No IPA generated in build/output"
+            exit 1
+          fi
+
+      - name: Upload to TestFlight
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.submit_to_stores == true) || vars.ENABLE_STORE_UPLOADS == 'true' }}
+        env:
+          APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_KEY_ISSUER: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER }}
+        run: |
+          : "${APP_STORE_CONNECT_API_KEY_CONTENT:?Missing APP_STORE_CONNECT_API_KEY_CONTENT}"
+          : "${APP_STORE_CONNECT_API_KEY_ID:?Missing APP_STORE_CONNECT_API_KEY_ID}"
+          : "${APP_STORE_CONNECT_API_KEY_ISSUER:?Missing APP_STORE_CONNECT_API_KEY_ISSUER}"
+          # altool does NOT accept a path to the key -- given --apiKey it
+          # searches four fixed directories and nowhere else.
+          API_KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$API_KEY_DIR"
+          API_KEY_PATH="$API_KEY_DIR/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
+          printf '%s' "$APP_STORE_CONNECT_API_KEY_CONTENT" > "$API_KEY_PATH"
+          chmod 600 "$API_KEY_PATH"
+          TARGET_IPA=$(find build/output -name "*.ipa" 2>/dev/null | head -n 1)
+          [ -n "$TARGET_IPA" ] && [ -f "$TARGET_IPA" ] || { echo "::error::IPA missing"; exit 1; }
+          xcrun altool --upload-app -f "$TARGET_IPA" -t ios \
+            --apiKey "$APP_STORE_CONNECT_API_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_API_KEY_ISSUER"
+
+      - name: Auto-add build to TestFlight Internal Testers
+        # ASC's own "Automatic distribution" toggle is read-only after a beta
+        # group is created, so this attaches the just-uploaded build to the
+        # internal group itself, matched by isInternalGroup rather than by
+        # name. See mobile_expo_apps/klondo/.github/workflows/deploy.yml for
+        # the full story; this is the identical script.
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.submit_to_stores == true) || vars.ENABLE_STORE_UPLOADS == 'true' }}
+        continue-on-error: true
+        env:
+          APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_KEY_ISSUER: ${{ secrets.APP_STORE_CONNECT_API_KEY_ISSUER }}
+          APP_BUILD: ${{ steps.version.outputs.app_build }}
+        run: |
+          BUNDLE_ID=$(grep -ohE "com\.[a-zA-Z0-9]+\.[a-zA-Z0-9_]+" app.config.ts app.json 2>/dev/null | head -1)
+          if [ -z "$BUNDLE_ID" ]; then
+            echo "::warning::Could not determine bundle id; skipping TestFlight group link"
+            exit 0
+          fi
+          pip3 install --quiet --user pyjwt cryptography 2>&1 | tail -5
+          echo "aW1wb3J0IHN5cywgb3MsIHRpbWUsIGpzb24sIHVybGxpYi5yZXF1ZXN0CgpCVU5ETEVfSUQsIEFQUF9CVUlMRCA9IHN5cy5hcmd2WzFdLCBzeXMuYXJndlsyXQprZXlfaWQgPSBvcy5lbnZpcm9uWyJBUFBfU1RPUkVfQ09OTkVDVF9BUElfS0VZX0lEIl0KaXNzdWVyX2lkID0gb3MuZW52aXJvblsiQVBQX1NUT1JFX0NPTk5FQ1RfQVBJX0tFWV9JU1NVRVIiXQpwcml2YXRlX2tleSA9IG9zLmVudmlyb25bIkFQUF9TVE9SRV9DT05ORUNUX0FQSV9LRVlfQ09OVEVOVCJdCkJBU0UgPSAiaHR0cHM6Ly9hcGkuYXBwc3RvcmVjb25uZWN0LmFwcGxlLmNvbS92MSIKCmltcG9ydCBqd3QKCmRlZiB0b2tlbigpOgogICAgbm93ID0gaW50KHRpbWUudGltZSgpKQogICAgcGF5bG9hZCA9IHsiaXNzIjogaXNzdWVyX2lkLCAiaWF0Ijogbm93LCAiZXhwIjogbm93ICsgMTIwMCwgImF1ZCI6ICJhcHBzdG9yZWNvbm5lY3QtdjEifQogICAgcmV0dXJuIGp3dC5lbmNvZGUocGF5bG9hZCwgcHJpdmF0ZV9rZXksIGFsZ29yaXRobT0iRVMyNTYiLCBoZWFkZXJzPXsia2lkIjoga2V5X2lkLCAidHlwIjogIkpXVCJ9KQoKZGVmIGFwaShtZXRob2QsIHVybCwgYm9keT1Ob25lKToKICAgIGRhdGEgPSBqc29uLmR1bXBzKGJvZHkpLmVuY29kZSgpIGlmIGJvZHkgaXMgbm90IE5vbmUgZWxzZSBOb25lCiAgICByZXEgPSB1cmxsaWIucmVxdWVzdC5SZXF1ZXN0KHVybCwgZGF0YT1kYXRhLCBtZXRob2Q9bWV0aG9kLCBoZWFkZXJzPXsKICAgICAgICAiQXV0aG9yaXphdGlvbiI6IGYiQmVhcmVyIHt0b2tlbigpfSIsCiAgICAgICAgIkNvbnRlbnQtVHlwZSI6ICJhcHBsaWNhdGlvbi9qc29uIiwKICAgIH0pCiAgICB3aXRoIHVybGxpYi5yZXF1ZXN0LnVybG9wZW4ocmVxKSBhcyByZXNwOgogICAgICAgIHJhdyA9IHJlc3AucmVhZCgpLmRlY29kZSgpCiAgICAgICAgcmV0dXJuIGpzb24ubG9hZHMocmF3KSBpZiByYXcgZWxzZSB7fQoKdHJ5OgogICAgYWQgPSBhcGkoIkdFVCIsIGYie0JBU0V9L2FwcHM/ZmlsdGVyW2J1bmRsZUlkXT17QlVORExFX0lEfSIpCiAgICBhcHBzID0gYWQuZ2V0KCJkYXRhIiwgW10pCiAgICBpZiBub3QgYXBwczoKICAgICAgICBwcmludChmIjo6d2FybmluZzo6Tm8gQVNDIGFwcCBmb3VuZCBmb3IgYnVuZGxlIGlkIHtCVU5ETEVfSUR9IikKICAgICAgICBzeXMuZXhpdCgwKQogICAgYXBwX2lkID0gYXBwc1swXVsiaWQiXQoKICAgIGdkID0gYXBpKCJHRVQiLCBmIntCQVNFfS9hcHBzL3thcHBfaWR9L2JldGFHcm91cHMiKQogICAgaW50ZXJuYWwgPSBbZyBmb3IgZyBpbiBnZC5nZXQoImRhdGEiLCBbXSkgaWYgZ1siYXR0cmlidXRlcyJdWyJpc0ludGVybmFsR3JvdXAiXV0KICAgIGlmIG5vdCBpbnRlcm5hbDoKICAgICAgICBwcmludCgiOjp3YXJuaW5nOjpObyBpbnRlcm5hbCBUZXN0RmxpZ2h0IGdyb3VwIGZvdW5kIikKICAgICAgICBzeXMuZXhpdCgwKQogICAgZ3JvdXBfaWQgPSBpbnRlcm5hbFswXVsiaWQiXQoKICAgIGJkID0gYXBpKCJHRVQiLCBmIntCQVNFfS9hcHBzL3thcHBfaWR9L2J1aWxkcz9saW1pdD0yMDAiKQogICAgbWF0Y2ggPSBbYiBmb3IgYiBpbiBiZC5nZXQoImRhdGEiLCBbXSkgaWYgYlsiYXR0cmlidXRlcyJdWyJ2ZXJzaW9uIl0gPT0gc3RyKEFQUF9CVUlMRCldCiAgICBpZiBub3QgbWF0Y2g6CiAgICAgICAgcHJpbnQoZiI6Ondhcm5pbmc6Ok5vIGJ1aWxkIGZvdW5kIHdpdGggYnVpbGROdW1iZXI9e0FQUF9CVUlMRH0gKHN0aWxsIHByb2Nlc3Npbmc/KSIpCiAgICAgICAgc3lzLmV4aXQoMCkKICAgIGJ1aWxkX2lkID0gbWF0Y2hbMF1bImlkIl0KCiAgICBleGlzdGluZyA9IGFwaSgiR0VUIiwgZiJ7QkFTRX0vYmV0YUdyb3Vwcy97Z3JvdXBfaWR9L2J1aWxkcz9saW1pdD01MCIpCiAgICBpZiBidWlsZF9pZCBpbiB7YlsiaWQiXSBmb3IgYiBpbiBleGlzdGluZy5nZXQoImRhdGEiLCBbXSl9OgogICAgICAgIHByaW50KGYiQnVpbGQge0FQUF9CVUlMRH0gYWxyZWFkeSBsaW5rZWQgdG8gaW50ZXJuYWwgdGVzdGVycyIpCiAgICAgICAgc3lzLmV4aXQoMCkKCiAgICBhcGkoIlBPU1QiLCBmIntCQVNFfS9iZXRhR3JvdXBzL3tncm91cF9pZH0vcmVsYXRpb25zaGlwcy9idWlsZHMiLCB7CiAgICAgICAgImRhdGEiOiBbeyJ0eXBlIjogImJ1aWxkcyIsICJpZCI6IGJ1aWxkX2lkfV0KICAgIH0pCiAgICBwcmludChmIkxpbmtlZCBidWlsZCB7QVBQX0JVSUxEfSB0byBpbnRlcm5hbCB0ZXN0ZXJzIGdyb3VwICd7aW50ZXJuYWxbMF1bJ2F0dHJpYnV0ZXMnXVsnbmFtZSddfSciKQpleGNlcHQgRXhjZXB0aW9uIGFzIGU6CiAgICBwcmludChmIjo6d2FybmluZzo6VGVzdEZsaWdodCBhdXRvLWxpbmsgZmFpbGVkOiB7ZX0iKQo=" | base64 -d > "$RUNNER_TEMP/tf_autolink.py"
+          python3 "$RUNNER_TEMP/tf_autolink.py" "$BUNDLE_ID" "$APP_BUILD"
+
+      - name: Stash iOS Artifacts
+        if: github.server_url == 'https://github.com'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-release-artifacts
+          path: build/output/*.ipa
+          if-no-files-found: ignore
+
+      - name: Release the disk this build took
+        if: always()
+        run: |
+          rm -rf node_modules ios android build || true
+          echo "free after cleanup: $(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')G"
+          if [ -n "${SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$SIGNING_KEYCHAIN" 2>/dev/null || true
+            security list-keychains -d user -s login.keychain-db 2>/dev/null || true
+          fi
+
+  build-android:
+    name: Android Build & Package
+    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'android' }}
+    # `android-build` label: exactly two runners have the Android SDK
+    # installed (hetzner-coolify-runner, Atas-Mac-mini) -- see
+    # mobile_expo_apps/klondo/.github/workflows/deploy.yml for why this is
+    # deliberately narrower than plain `macOS`.
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.android_runner == 'github-hosted' && 'ubuntu-24.04' || fromJSON('["self-hosted", "android-build"]') }}
+    outputs:
+      app_name: ${{ steps.version.outputs.app_name }}
+      app_version: ${{ steps.version.outputs.app_version }}
+      app_build: ${{ steps.version.outputs.app_build }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+    steps:
+      - name: Refuse to build if the host is short of disk
+        if: runner.environment == 'self-hosted'
+        run: |
+          free_gb=$(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')
+          echo "free on this runner: ${free_gb}G"
+          if [ "${free_gb:-0}" -lt 15 ]; then
+            echo "::error::only ${free_gb}G free — refusing to build rather than risk the host"
+            exit 1
+          fi
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clean Workspace
+        run: rm -rf build ios android
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: |
+          ulimit -n 8192
+          npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Compute Dynamic Version
+        id: version
+        run: |
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          APP_NAME='OmniMail'
+          APP_VERSION="1.0.$COMMIT_COUNT"
+          APP_BUILD="$COMMIT_COUNT"
+          TAG_NAME="v$APP_VERSION"
+
+          echo "Computed Version: $APP_NAME $APP_VERSION (Build $APP_BUILD, Tag $TAG_NAME)"
+          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "app_build=$APP_BUILD" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
+          echo "APP_BUILD=$APP_BUILD" >> $GITHUB_ENV
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+
+      - name: Install Android build tools
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+
+      - name: Configure Android release signing
+        # Fleet-wide shared upload keystore, org-level secret -- see
+        # scripts/ship/set-android-keystore-secrets.sh for why one keystore
+        # covers every app (Play App Signing means the upload key is only an
+        # upload-time identity, not the key that ends up signing the app).
+        env:
+          APP_KEYSTORE_BASE64: ${{ secrets.APP_KEYSTORE_BASE64 }}
+          APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          APP_KEYSTORE_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+          APP_KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
+        run: |
+          : "${APP_KEYSTORE_BASE64:?Missing APP_KEYSTORE_BASE64}"
+          : "${APP_KEYSTORE_PASSWORD:?Missing APP_KEYSTORE_PASSWORD}"
+          : "${APP_KEYSTORE_ALIAS:?Missing APP_KEYSTORE_ALIAS}"
+          : "${APP_KEY_PASSWORD:?Missing APP_KEY_PASSWORD}"
+          KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          printf '%s' "$APP_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$APP_KEYSTORE_PASSWORD" -alias "$APP_KEYSTORE_ALIAS" >/dev/null
+          {
+            echo "KEYSTORE_PATH=$KEYSTORE_PATH"
+            echo "KEYSTORE_PASSWORD=$APP_KEYSTORE_PASSWORD"
+            echo "KEY_ALIAS=$APP_KEYSTORE_ALIAS"
+            echo "KEY_PASSWORD=$APP_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Expo Prebuild Android
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build Android APK & AAB
+        run: |
+          mkdir -p build/output
+          cd android
+          mkdir -p "$RUNNER_TEMP/gradle-home"
+          export GRADLE_USER_HOME="$RUNNER_TEMP/gradle-home"
+          echo "Building Release APK..."
+          ./gradlew assembleRelease --stacktrace --no-daemon --max-workers=2 -Porg.gradle.parallel=false -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=1536m" -Dkotlin.compiler.execution.strategy=in-process \
+            "-Pandroid.injected.signing.store.file=$KEYSTORE_PATH" \
+            "-Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD" \
+            "-Pandroid.injected.signing.key.alias=$KEY_ALIAS" \
+            "-Pandroid.injected.signing.key.password=$KEY_PASSWORD"
+          echo "Building Release AAB Bundle..."
+          ./gradlew bundleRelease --stacktrace --no-daemon --max-workers=2 -Porg.gradle.parallel=false -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=1536m" -Dkotlin.compiler.execution.strategy=in-process \
+            "-Pandroid.injected.signing.store.file=$KEYSTORE_PATH" \
+            "-Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD" \
+            "-Pandroid.injected.signing.key.alias=$KEY_ALIAS" \
+            "-Pandroid.injected.signing.key.password=$KEY_PASSWORD"
+          cd ..
+
+          RAW_APK=$(find android/app/build/outputs/apk -name "*release*.apk" 2>/dev/null | head -n 1)
+          if [ -n "$RAW_APK" ] && [ -f "$RAW_APK" ]; then
+            cp "$RAW_APK" "build/output/${APP_NAME}-${APP_VERSION}.apk"
+            echo "Successfully generated APK at build/output/${APP_NAME}-${APP_VERSION}.apk"
+          else
+            echo "::error::Release APK was not produced"
+            exit 1
+          fi
+
+          RAW_AAB=$(find android/app/build/outputs/bundle -name "*.aab" 2>/dev/null | head -n 1)
+          if [ -n "$RAW_AAB" ] && [ -f "$RAW_AAB" ]; then
+            cp "$RAW_AAB" "build/output/${APP_NAME}-${APP_VERSION}.aab"
+            echo "Successfully generated AAB at build/output/${APP_NAME}-${APP_VERSION}.aab"
+          else
+            echo "::error::Release AAB was not produced"
+            exit 1
+          fi
+
+          RAW_MAPPING=$(find android/app/build/outputs/mapping -name "mapping.txt" 2>/dev/null | head -n 1)
+          if [ -n "$RAW_MAPPING" ] && [ -f "$RAW_MAPPING" ]; then
+            cp "$RAW_MAPPING" "build/output/mapping.txt"
+            echo "Successfully generated mapping at build/output/mapping.txt"
+          fi
+
+      - name: Upload to Google Play Store
+        # `ENABLE_PLAY_UPLOAD` is an opt-OUT, checked only here -- Google's
+        # Developer API cannot create the app record itself, so until that
+        # exists in Play Console this step is deliberately disabled at the
+        # repo level (vars.ENABLE_PLAY_UPLOAD=false) rather than left to fail
+        # the whole run red after everything else already succeeded. Flip it
+        # to true once the app is registered in Play Console.
+        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.submit_to_stores == true) || vars.ENABLE_STORE_UPLOADS == 'true') && vars.ENABLE_PLAY_UPLOAD != 'false' }}
+        uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+          packageName: com.altixcode.omnimail
+          releaseFiles: build/output/${{ steps.version.outputs.app_name }}-${{ steps.version.outputs.app_version }}.aab
+          mappingFile: build/output/mapping.txt
+          track: ${{ vars.PLAY_STORE_TRACK || 'production' }}
+          status: ${{ vars.PLAY_STORE_STATUS || 'completed' }}
+          # Must be false until the app has been published once -- see
+          # android-play-draft-app-status in project memory.
+          changesNotSentForReview: false
+          releaseName: ${{ steps.version.outputs.app_name }} ${{ steps.version.outputs.app_version }}
+
+      - name: Stash Android Artifacts
+        if: github.server_url == 'https://github.com'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-artifacts
+          path: |
+            build/output/*.apk
+            build/output/*.aab
+            build/output/mapping.txt
+          if-no-files-found: ignore
+
+      - name: Release the disk this build took
+        if: always()
+        run: |
+          ./android/gradlew --stop >/dev/null 2>&1 || true
+          rm -rf node_modules ios android build "$GRADLE_USER_HOME" || true
+          echo "free after cleanup: $(df -Pk / | awk 'NR==2 {print int($4/1024/1024)}')G"
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-ios, build-android]
+    if: github.server_url == 'https://github.com' && (needs.build-ios.result == 'success' || needs.build-android.result == 'success')
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Stashed Artifacts
+        if: github.server_url == 'https://github.com'
+        uses: actions/download-artifact@v4
+        with:
+          path: build/downloaded
+
+      - name: Prepare Release Packages & Checksums
+        id: prep
+        run: |
+          mkdir -p build/output
+          find build/downloaded -type f \( -name "*.ipa" -o -name "*.apk" -o -name "*.aab" \) -exec cp {} build/output/ \;
+
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          APP_NAME='OmniMail'
+          APP_VERSION="1.0.$COMMIT_COUNT"
+          APP_BUILD="$COMMIT_COUNT"
+          TAG_NAME="v$APP_VERSION"
+
+          cd build/output
+          shasum -a 256 *.ipa *.apk *.aab > SHA256SUMS.txt 2>/dev/null || true
+          cd ../..
+
+          CHANGELOG=$(git log --pretty=format:"* %s (%h)" -n 12)
+          REPO="${{ github.repository }}"
+
+          cat << EOF > RELEASE_NOTES.md
+          ## 📬 ${APP_NAME} ${TAG_NAME} (Build ${APP_BUILD})
+
+          Companion mobile app for OmniMail, the multi-account mail and calendar
+          aggregator at webmail.altixcode.com.
+
+          ### 📦 Direct Download Packages
+          | Package | Description | Target Platform / Architecture | Direct Download Link |
+          |:---|:---|:---|:---|
+          EOF
+
+          if [ -f "build/output/${APP_NAME}-${APP_VERSION}.ipa" ]; then
+            echo "| **\`${APP_NAME}-${APP_VERSION}.ipa\`** | Signed iOS Application Archive | iOS 15.0+ (TestFlight / Sideloading / AltStore) | [Download ${APP_NAME}-${APP_VERSION}.ipa](https://github.com/${REPO}/releases/download/${TAG_NAME}/${APP_NAME}-${APP_VERSION}.ipa) |" >> RELEASE_NOTES.md
+          fi
+
+          if [ -f "build/output/${APP_NAME}-${APP_VERSION}.apk" ]; then
+            echo "| **\`${APP_NAME}-${APP_VERSION}.apk\`** | Standalone Universal APK (Recommended) | All Android Devices | [Download ${APP_NAME}-${APP_VERSION}.apk](https://github.com/${REPO}/releases/download/${TAG_NAME}/${APP_NAME}-${APP_VERSION}.apk) |" >> RELEASE_NOTES.md
+          fi
+
+          if [ -f "build/output/${APP_NAME}-${APP_VERSION}.aab" ]; then
+            echo "| **\`${APP_NAME}-${APP_VERSION}.aab\`** | Google Play App Bundle | Android Play Store Distribution | [Download ${APP_NAME}-${APP_VERSION}.aab](https://github.com/${REPO}/releases/download/${TAG_NAME}/${APP_NAME}-${APP_VERSION}.aab) |" >> RELEASE_NOTES.md
+          fi
+
+          cat << EOF >> RELEASE_NOTES.md
+
+          ### 📝 Recent Changes
+          ${CHANGELOG}
+
+          ### 🔒 Binary Integrity (SHA-256)
+          \`\`\`text
+          $(cat build/output/SHA256SUMS.txt 2>/dev/null || echo "No checksums generated")
+          \`\`\`
+          EOF
+
+          sed -i -e 's/^[ \t]*##/##/' RELEASE_NOTES.md
+          sed -i -e 's/^[ \t]*###/###/' RELEASE_NOTES.md
+          sed -i -e 's/^[ \t]*- /- /' RELEASE_NOTES.md
+
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "APP_BUILD=$APP_BUILD" >> $GITHUB_ENV
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          command -v gh >/dev/null 2>&1 || brew install gh
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Release $TAG_NAME already exists - updating notes and assets."
+            gh release edit "$TAG_NAME" \
+              --title "${APP_NAME} ${TAG_NAME} (Build ${APP_BUILD})" \
+              --notes-file RELEASE_NOTES.md \
+              --draft=false \
+              --prerelease=false \
+              --latest
+          else
+            echo "Creating release $TAG_NAME."
+            gh release create "$TAG_NAME" \
+              --title "${APP_NAME} ${TAG_NAME} (Build ${APP_BUILD})" \
+              --notes-file RELEASE_NOTES.md \
+              --target "${{ github.sha }}" \
+              --latest
+          fi
+
+          FILES=()
+          for f in build/output/*.ipa build/output/*.apk build/output/*.aab build/output/SHA256SUMS.txt; do
+            if [ -f "$f" ]; then
+              FILES+=("$f")
+            fi
+          done
+
+          if [ ${#FILES[@]} -gt 0 ]; then
+            echo "Uploading ${#FILES[@]} artifacts to release $TAG_NAME..."
+            gh release upload "$TAG_NAME" "${FILES[@]}" --clobber
+          else
+            echo "Warning: No release artifacts found to upload."
+          fi
+
+      - name: Tag Git Commit
+        run: |
+          if ! git ls-remote --exit-code origin "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
+            git tag "$TAG_NAME"
+            git push origin "$TAG_NAME"
+          fi

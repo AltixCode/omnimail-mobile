@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Typecheck and bundle export
+    # Deliberately NOT pinned to an OS: both self-hosted ARM64 runners (the
+    # Linux container and the macOS box) can run these Node-only steps, and a
+    # job asking for a label no ONLINE runner offers queues forever rather
+    # than failing loudly.
+    runs-on: [self-hosted, ARM64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        # An Expo tree is ~50k files and a self-hosted runner's default
+        # descriptor limit is 256 — npm ci dies partway with ENFILE otherwise.
+        run: |
+          ulimit -n 8192 || true
+          npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The closest thing to "does the app actually load" without a device: a
+      # real Metro production build resolves every import and every route, so
+      # a broken module path or a bad expo-router file cannot reach a build.
+      - name: Export iOS and Android bundles
+        run: |
+          npx expo export --platform ios --output-dir dist/ios
+          npx expo export --platform android --output-dir dist/android
+        env:
+          EXPO_NO_TELEMETRY: '1'
+
+      - name: Report bundle size
+        run: |
+          echo "### Bundle size" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          du -sh dist/ios/_expo/static/js/* dist/android/_expo/static/js/* >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
