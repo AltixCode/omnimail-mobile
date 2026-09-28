@@ -30,6 +30,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "com.altixcode.omnimail",
+      "googleServicesFile": "./google-services.json",
       "permissions": ["RECEIVE_BOOT_COMPLETED", "POST_NOTIFICATIONS"]
     },
     "plugins": [

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "955454504970",
+    "project_id": "omnimail-d2512",
+    "storage_bucket": "omnimail-d2512.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:955454504970:android:a9356b7adbef7414381ff3",
+        "android_client_info": {
+          "package_name": "com.altixcode.omnimail"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBFoSYUQdpM6lxHFnKkEQeKtO3eK_vsnGU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
