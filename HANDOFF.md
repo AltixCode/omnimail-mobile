@@ -361,6 +361,107 @@ instance it's paired with, not necessarily the local machine):
   push notifications are now fully configured.
 
 **What's genuinely still open**: Play Console app record (next week,
-per the user), and the security/stale-session finding in §9 (still not
-independently reproduced or confirmed fixed).
+per the user).
+
+## 12. Update (2026-09-29): TestFlight bug fixes, screenshots, submission prep, new features
+
+**All 8 outstanding TestFlight feedback items addressed** (5 bugs + 3
+feature requests):
+
+1. **Root cause of 2 of the 5 bugs at once**: `react-native-svg` (a
+   peer dependency of `lucide-react-native`, used for literally every
+   icon in the app) was never a direct dependency and was never linked
+   into the iOS build (absent from `Podfile.lock` entirely). Every
+   icon -- nav bar back/star/archive/delete, compose Cancel/attachment/
+   send, the compose FAB, tab bar icons -- silently rendered nothing,
+   in both light and dark mode. Fixed with `npx expo install
+   react-native-svg` + `pod install`. This is very likely the real
+   story behind "buttons in nav bar not visible" and "cancel button/
+   attachment icon missing" -- not a dark-mode-only contrast bug as
+   originally guessed.
+2. Switch contrast (`settings.tsx`), WebView dynamic height
+   (`message/[id].tsx`), and the calendar agenda's today-forward filter
+   (`calendar.tsx`) -- all fixed and confirmed visually on-device (see
+   §9's original findings for detail on what was wrong).
+3. **3 new feature requests, all implemented**: calendar event creation
+   (a "+" FAB opens a New Event modal, wired to the existing
+   `api.calendar.createEvent`), a rich text compose editor (a
+   `react-native-webview` `contentEditable` div + Bold/Italic/
+   Underline/bullet-list toolbar via `document.execCommand`, replacing
+   the old plain `TextInput` body), and swipeable inbox rows
+   (`PanResponder`-based, no new native deps -- swipe left to archive,
+   swipe right to delete) plus a batch-select mode with a bottom action
+   bar (mark read / archive / delete). See `src/components/
+   SwipeableMessageRow.tsx` (new) and the diffs to `index.tsx`,
+   `compose.tsx`, `calendar.tsx`.
+   - One bug found and fixed during testing: the New Event modal had no
+     `KeyboardAvoidingView`, so the Create Event button became
+     unreachable behind the keyboard with nothing to scroll to. Fixed
+     by wrapping the modal in `KeyboardAvoidingView` (`behavior:
+     "padding"` on iOS).
+
+**Remote image privacy, ported from the web app**: messages previously
+rendered every `<img>` unconditionally the moment the WebView loaded --
+no blocking, no proxy, nothing. Now matches web exactly: images are
+blocked by default (a regex swap of `http(s)://` `img src` values for a
+placeholder, preserving the original URL, mirroring web's DOMPurify
+hook approach but done as a plain string transform before the HTML
+reaches the WebView), with a privacy banner offering "Load Images"
+(session-only) and "Always load from this sender" (persists via the
+same `/api/settings/trusted-senders` backend endpoint the web app
+already uses -- so a sender trusted on one platform is trusted on the
+other). Added a Trusted Senders management section to `settings.tsx`
+(list/add/remove) for parity with the web app's account-modal "images"
+tab.
+
+**Critical, unrelated finding during this work -- a real cross-tenant
+data leak in `web_apps/omnimail`, fixed and deployed same day**: while
+testing with a fresh demo account, its own valid auth token returned a
+*different real user's* private inbox from `GET /api/messages`. Root
+cause: `GET /api/messages` and 8 other data-access routes (message
+detail/batch/send, account detail/test, calendar event detail/invite,
+attachment download) never scoped their Prisma queries to the
+authenticated user at all -- unlike `accounts`/`folders`/`calendar`
+list routes, which already did this correctly via
+`getOrCreateDefaultUser(req)`. Any authenticated user could read,
+modify or delete any other user's mail/calendar/account credentials,
+and send email impersonating any account. All 9 routes fixed same
+pattern, `tsc`/`next build` clean, deployed via the normal
+Forgejo-webhook path, verified fixed by repeating the exact repro.
+Full detail in project memory `omnimail-cross-tenant-idor-fixed` (this
+also retroactively corrects the §9/§10 "security finding" above, which
+had wrongly guessed this was a client-side stale-session bug -- it
+never was).
+
+**Screenshots recaptured at the correct device class**: the
+`OmniMail Test iPhone` simulator used for the original `01-login.png`
+capture was actually iPhone-16-Pro class (6.3", 1206x2622) rather than
+the 6.9" class Apple's screenshot spec requires (1320x2868, iPhone
+16/17/18 Pro Max). Created a fresh `iPhone 17 Pro Max` simulator for
+this. Final sets, both populated via a seeded demo mail account (see
+below) rather than empty-state screens: `store/screenshots/ios-6.9/`
+(5 images: inbox, message detail, calendar, settings, compose) and
+`store/screenshots/ipad-13/` (4 images, same set minus compose) at
+2064x2752 on the existing "iPad Pro 13-inch (M4)" simulator. All 9
+uploaded to App Store Connect via `scripts/ship/replace-screenshots.py`
+(`APP_IPHONE_67` / `APP_IPAD_PRO_3GEN_129` display types -- the script's
+own naming, but the pixel dimensions match Apple's 6.9"/13" specs) and
+confirmed `COMPLETE` asset-processing state. **Not submitted for
+review**, per instruction.
+
+**Demo account seeded with cosmetic data for screenshots**: the
+screenshot account (`demo-mobile-shots@altixcode.com`) had zero
+connected mail accounts, so authenticated screens were just empty
+states. With the user's explicit go-ahead, added
+`prisma/seed-demo-account.mjs` to `web_apps/omnimail` (committed,
+idempotent, `syncActive: false` so the IMAP worker never touches the
+fake host) and ran it once in the deployed container via Coolify's
+`scheduled_tasks` `run_once` action -- gives the account one mail
+account, 6 fictional-but-realistic messages, and 3 calendar events.
+Fixture data only; the fictional persona ("Jordan Rivera") and sender
+domains are all `@example.com`, not real people or companies.
+
+**CI**: pushed straight to `main` (this repo's CI/CD branch) after each
+round of fixes; the iOS/Android/TestFlight-upload pipeline is the same
+one documented in §9-§11 and needs no changes here.
 
