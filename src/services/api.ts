@@ -31,7 +31,7 @@ export class ApiError extends Error {
 
 async function request<T>(
   path: string,
-  options: RequestInit & { serverUrlOverride?: string } = {}
+  options: RequestInit & { serverUrlOverride?: string } = {},
 ): Promise<T> {
   const { serverUrlOverride, ...fetchOptions } = options;
   const baseUrl = serverUrlOverride || (await getServerUrl());
@@ -65,11 +65,14 @@ async function request<T>(
     clearTimeout(timeoutId);
   } catch (err: any) {
     if (err.name === "AbortError") {
-      throw new ApiError("Connection timed out. Please check your network.", 408);
+      throw new ApiError(
+        "Connection timed out. Please check your network.",
+        408,
+      );
     }
     throw new ApiError(
       `Cannot connect to server at ${baseUrl}. Please check the server URL or your internet connection.`,
-      0
+      0,
     );
   }
 
@@ -87,7 +90,9 @@ async function request<T>(
 
   if (!response.ok) {
     const errorMessage =
-      (typeof data === "object" && data !== null && (data.error || data.message)) ||
+      (typeof data === "object" &&
+        data !== null &&
+        (data.error || data.message)) ||
       `Request failed with status ${response.status}`;
     throw new ApiError(errorMessage, response.status, data);
   }
@@ -97,7 +102,11 @@ async function request<T>(
 
 export const api = {
   auth: {
-    async login(email: string, password: string, serverUrlOverride?: string): Promise<{ user: User; token: string }> {
+    async login(
+      email: string,
+      password: string,
+      serverUrlOverride?: string,
+    ): Promise<{ user: User; token: string }> {
       const result = await request<{
         success: boolean;
         token?: string;
@@ -110,7 +119,10 @@ export const api = {
       });
 
       if (!result.token) {
-        throw new ApiError("Server did not return an authentication token", 500);
+        throw new ApiError(
+          "Server did not return an authentication token",
+          500,
+        );
       }
 
       await setAuthToken(result.token);
@@ -121,7 +133,7 @@ export const api = {
 
     async register(
       data: { email: string; password: string; name?: string },
-      serverUrlOverride?: string
+      serverUrlOverride?: string,
     ): Promise<{ user: User; token: string }> {
       const result = await request<{
         success: boolean;
@@ -135,7 +147,10 @@ export const api = {
       });
 
       if (!result.token) {
-        throw new ApiError("Server did not return an authentication token", 500);
+        throw new ApiError(
+          "Server did not return an authentication token",
+          500,
+        );
       }
 
       await setAuthToken(result.token);
@@ -183,25 +198,30 @@ export const api = {
       if (params.query) query.set("query", params.query);
 
       const qs = query.toString();
-      return await request<MessageListResponse>(`/api/messages${qs ? `?${qs}` : ""}`);
+      return await request<MessageListResponse>(
+        `/api/messages${qs ? `?${qs}` : ""}`,
+      );
     },
 
-    async get(id: string): Promise<{ message: MessageDetail; thread?: MessageDetail[] }> {
-      return await request<{ message: MessageDetail; thread?: MessageDetail[] }>(
-        `/api/messages/${id}`
-      );
+    async get(
+      id: string,
+    ): Promise<{ message: MessageDetail; thread?: MessageDetail[] }> {
+      return await request<{
+        message: MessageDetail;
+        thread?: MessageDetail[];
+      }>(`/api/messages/${id}`);
     },
 
     async update(
       id: string,
-      updates: { isRead?: boolean; isStarred?: boolean; folderId?: string }
+      updates: { isRead?: boolean; isStarred?: boolean; folderId?: string },
     ): Promise<{ success: boolean; message: MessageDetail }> {
       return await request<{ success: boolean; message: MessageDetail }>(
         `/api/messages/${id}`,
         {
           method: "PATCH",
           body: JSON.stringify(updates),
-        }
+        },
       );
     },
 
@@ -213,14 +233,22 @@ export const api = {
 
     async batch(
       messageIds: string[],
-      action: "mark-read" | "mark-unread" | "star" | "unstar" | "trash" | "archive" | "inbox" | "delete"
+      action:
+        | "mark-read"
+        | "mark-unread"
+        | "star"
+        | "unstar"
+        | "trash"
+        | "archive"
+        | "inbox"
+        | "delete",
     ): Promise<{ success: boolean; affectedCount: number }> {
       return await request<{ success: boolean; affectedCount: number }>(
         "/api/messages/batch",
         {
           method: "POST",
           body: JSON.stringify({ messageIds, action }),
-        }
+        },
       );
     },
 
@@ -247,7 +275,7 @@ export const api = {
         {
           method: "POST",
           body: JSON.stringify(data),
-        }
+        },
       );
     },
   },
@@ -274,10 +302,13 @@ export const api = {
       caldavUser?: string;
       caldavPassword?: string;
     }): Promise<{ success: boolean; account: MailAccount }> {
-      return await request<{ success: boolean; account: MailAccount }>("/api/accounts", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
+      return await request<{ success: boolean; account: MailAccount }>(
+        "/api/accounts",
+        {
+          method: "POST",
+          body: JSON.stringify(data),
+        },
+      );
     },
 
     async test(data: {
@@ -291,14 +322,21 @@ export const api = {
       smtpSecure?: boolean;
       smtpUser: string;
       smtpPassword: string;
-    }): Promise<{ success: boolean; imapSuccess: boolean; smtpSuccess: boolean; error?: string }> {
-      return await request<{ success: boolean; imapSuccess: boolean; smtpSuccess: boolean; error?: string }>(
-        "/api/accounts/test",
-        {
-          method: "POST",
-          body: JSON.stringify(data),
-        }
-      );
+    }): Promise<{
+      success: boolean;
+      imapSuccess: boolean;
+      smtpSuccess: boolean;
+      error?: string;
+    }> {
+      return await request<{
+        success: boolean;
+        imapSuccess: boolean;
+        smtpSuccess: boolean;
+        error?: string;
+      }>("/api/accounts/test", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
     },
 
     async delete(id: string): Promise<{ success: boolean }> {
@@ -335,12 +373,14 @@ export const api = {
   },
 
   calendar: {
-    async get(params: {
-      start?: string;
-      end?: string;
-      calendarId?: string;
-      accountId?: string;
-    } = {}): Promise<CalendarResponse> {
+    async get(
+      params: {
+        start?: string;
+        end?: string;
+        calendarId?: string;
+        accountId?: string;
+      } = {},
+    ): Promise<CalendarResponse> {
       const query = new URLSearchParams();
       if (params.start) query.set("start", params.start);
       if (params.end) query.set("end", params.end);
@@ -348,7 +388,9 @@ export const api = {
       if (params.accountId) query.set("accountId", params.accountId);
 
       const qs = query.toString();
-      return await request<CalendarResponse>(`/api/calendar${qs ? `?${qs}` : ""}`);
+      return await request<CalendarResponse>(
+        `/api/calendar${qs ? `?${qs}` : ""}`,
+      );
     },
 
     async createEvent(data: {
@@ -366,7 +408,7 @@ export const api = {
         {
           method: "POST",
           body: JSON.stringify(data),
-        }
+        },
       );
     },
   },
@@ -383,7 +425,7 @@ export const api = {
         {
           method: "POST",
           body: JSON.stringify(data),
-        }
+        },
       );
     },
 
@@ -392,24 +434,58 @@ export const api = {
         `/api/devices?token=${encodeURIComponent(token)}`,
         {
           method: "DELETE",
-        }
+        },
       );
     },
 
     async list(): Promise<{ success: boolean; devices: DeviceRecord[] }> {
       return await request<{ success: boolean; devices: DeviceRecord[] }>(
-        "/api/devices"
+        "/api/devices",
       );
     },
 
-    async testPush(title?: string, body?: string): Promise<{ success: boolean; result: any }> {
+    async testPush(
+      title?: string,
+      body?: string,
+    ): Promise<{ success: boolean; result: any }> {
       return await request<{ success: boolean; result: any }>(
         "/api/devices/test-push",
         {
           method: "POST",
           body: JSON.stringify({ title, body }),
-        }
+        },
       );
+    },
+  },
+
+  settings: {
+    trustedSenders: {
+      async list(): Promise<{ senders: { id: string; email: string }[] }> {
+        return await request<{ senders: { id: string; email: string }[] }>(
+          "/api/settings/trusted-senders",
+        );
+      },
+
+      async add(
+        email: string,
+      ): Promise<{ success: boolean; sender: { id: string; email: string } }> {
+        return await request<{
+          success: boolean;
+          sender: { id: string; email: string };
+        }>("/api/settings/trusted-senders", {
+          method: "POST",
+          body: JSON.stringify({ email }),
+        });
+      },
+
+      async remove(email: string): Promise<{ success: boolean }> {
+        return await request<{ success: boolean }>(
+          `/api/settings/trusted-senders?email=${encodeURIComponent(email)}`,
+          {
+            method: "DELETE",
+          },
+        );
+      },
     },
   },
 };

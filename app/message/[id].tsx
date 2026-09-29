@@ -32,6 +32,8 @@ import {
   Check,
   Download,
   FileText,
+  Shield,
+  ShieldCheck,
 } from "lucide-react-native";
 import { useTheme } from "../../src/context/ThemeContext";
 import { api } from "../../src/services/api";
@@ -51,6 +53,58 @@ export default function MessageDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  // Remote image privacy: blocked by default, same policy as the web app.
+  const [trustedSenders, setTrustedSenders] = useState<Set<string>>(new Set());
+  const [loadRemoteImages, setLoadRemoteImages] = useState(false);
+  const [trustingSender, setTrustingSender] = useState(false);
+
+  useEffect(() => {
+    api.settings.trustedSenders
+      .list()
+      .then((res) => {
+        setTrustedSenders(
+          new Set((res.senders || []).map((s) => s.email.toLowerCase())),
+        );
+      })
+      .catch(() => {});
+  }, []);
+
+  const cleanSenderEmail =
+    (message?.fromAddress || "")
+      .trim()
+      .toLowerCase()
+      .match(/<([^>]+)>/)?.[1]
+      ?.trim() || (message?.fromAddress || "").trim().toLowerCase();
+
+  const isSenderTrusted = (() => {
+    if (!cleanSenderEmail || trustedSenders.size === 0) return false;
+    if (trustedSenders.has(cleanSenderEmail)) return true;
+    const atIndex = cleanSenderEmail.indexOf("@");
+    if (atIndex !== -1) {
+      const domain = cleanSenderEmail.slice(atIndex);
+      if (trustedSenders.has(domain)) return true;
+    }
+    return false;
+  })();
+
+  useEffect(() => {
+    setLoadRemoteImages(isSenderTrusted);
+  }, [isSenderTrusted, message?.id]);
+
+  const handleAlwaysTrustSender = async () => {
+    if (!cleanSenderEmail || trustingSender) return;
+    setTrustingSender(true);
+    try {
+      await api.settings.trustedSenders.add(cleanSenderEmail);
+      setTrustedSenders((prev) => new Set(prev).add(cleanSenderEmail));
+      setLoadRemoteImages(true);
+    } catch (err) {
+      console.warn("Failed to add trusted sender:", err);
+    } finally {
+      setTrustingSender(false);
+    }
+  };
+
   useEffect(() => {
     if (id) {
       loadMessage(id);
@@ -62,6 +116,7 @@ export default function MessageDetailScreen() {
       setLoading(true);
       setError(null);
       setWebViewHeight(300);
+      setLoadRemoteImages(false);
       const res = await api.messages.get(msgId);
       setMessage(res.message);
       setThread(res.thread || [res.message]);
@@ -262,12 +317,28 @@ export default function MessageDetailScreen() {
     }
   };
 
+  // Blocks remote <img> sources (http/https) in an HTML string, preserving
+  // the original URL in data-omnimail-src so it can be restored later
+  // without re-fetching the message. Mirrors the web app's DOMPurify hook.
+  const blockRemoteImages = (html: string): string => {
+    return html.replace(
+      /<img\b([^>]*?)\ssrc=(["'])(https?:\/\/[^"']+)\2([^>]*)>/gi,
+      (_match, pre: string, quote: string, src: string, post: string) => {
+        const restAttrs = `${pre}${post}`;
+        return `<img${restAttrs} data-omnimail-src="${src}" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='28' viewBox='0 0 120 28'%3E%3Crect width='120' height='28' fill='%23f1f5f9' rx='4'/%3E%3Ctext x='60' y='18' font-size='10' font-family='sans-serif' fill='%2394a3b8' text-anchor='middle'%3EImage blocked%3C/text%3E%3C/svg%3E" style="border:1px dashed #cbd5e1;border-radius:4px;">`;
+      },
+    );
+  };
+
   // Build clean HTML document for WebView
   const getRenderHtml = () => {
     if (!message?.bodyHtml) return null;
     const textColor = isDark ? "#E2E8F0" : "#1E293B";
     const linkColor = isDark ? "#60A5FA" : "#2563EB";
     const bgColor = isDark ? "#111827" : "#FFFFFF";
+    const bodyHtml = loadRemoteImages
+      ? message.bodyHtml
+      : blockRemoteImages(message.bodyHtml);
 
     return `
       <!DOCTYPE html>
@@ -294,7 +365,7 @@ export default function MessageDetailScreen() {
           </style>
         </head>
         <body>
-          ${message.bodyHtml}
+          ${bodyHtml}
           <script>
             function reportHeight() {
               var h = document.body.scrollHeight;
@@ -503,6 +574,78 @@ export default function MessageDetailScreen() {
             </View>
           </View>
         </View>
+
+        {/* Remote Image Privacy Banner */}
+        {message.bodyHtml ? (
+          <View
+            style={[
+              styles.privacyBanner,
+              {
+                backgroundColor: isSenderTrusted
+                  ? colors.primaryLight
+                  : colors.warningLight,
+              },
+            ]}
+          >
+            <View style={styles.privacyBannerRow}>
+              {isSenderTrusted ? (
+                <ShieldCheck size={16} color={colors.primary} />
+              ) : (
+                <Shield size={16} color={colors.warning} />
+              )}
+              <Text
+                style={[
+                  styles.privacyBannerText,
+                  { color: isSenderTrusted ? colors.primary : colors.warning },
+                ]}
+              >
+                {isSenderTrusted
+                  ? `Remote images automatically loaded from trusted sender ${cleanSenderEmail}.`
+                  : loadRemoteImages
+                    ? "Remote images loaded for this message."
+                    : "Remote images are blocked to prevent senders from tracking you."}
+              </Text>
+            </View>
+            {!loadRemoteImages && (
+              <View style={styles.privacyBannerActions}>
+                <TouchableOpacity
+                  onPress={() => setLoadRemoteImages(true)}
+                  style={[
+                    styles.privacyBannerButton,
+                    { backgroundColor: isDark ? "#452E0B" : "#FDE68A" },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.privacyBannerButtonText,
+                      { color: colors.warning },
+                    ]}
+                  >
+                    Load Images
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleAlwaysTrustSender}
+                  disabled={trustingSender}
+                  style={[
+                    styles.privacyBannerButton,
+                    { backgroundColor: colors.primaryLight },
+                  ]}
+                >
+                  <ShieldCheck size={12} color={colors.primary} />
+                  <Text
+                    style={[
+                      styles.privacyBannerButtonText,
+                      { color: colors.primary },
+                    ]}
+                  >
+                    Always load from this sender
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        ) : null}
 
         {/* Email Body Rendering */}
         <View style={styles.bodyContainer}>
@@ -807,6 +950,40 @@ const styles = StyleSheet.create({
   bodyContainer: {
     padding: Spacing.lg,
     minHeight: 240,
+  },
+  privacyBanner: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.sm,
+    borderRadius: 10,
+    padding: Spacing.sm,
+  },
+  privacyBannerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  privacyBannerText: {
+    flex: 1,
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.medium,
+  },
+  privacyBannerActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
+  },
+  privacyBannerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  privacyBannerButtonText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
   },
   webViewWrapper: {
     minHeight: 300,

@@ -30,12 +30,14 @@ import {
   ChevronDown,
   Mail,
   Plus,
+  ListChecks,
+  MailOpen,
 } from "lucide-react-native";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { api } from "../../src/services/api";
 import { MessageListItem, MailAccount, Folder } from "../../src/types";
-import { MessageCard } from "../../src/components/MessageCard";
+import { SwipeableMessageRow } from "../../src/components/SwipeableMessageRow";
 import { EmptyState } from "../../src/components/EmptyState";
 import { AddAccountModal } from "../../src/components/AddAccountModal";
 import { Spacing, Typography } from "../../src/constants/theme";
@@ -57,7 +59,9 @@ export default function InboxScreen() {
   // State
   const [messages, setMessages] = useState<MessageListItem[]>([]);
   const [accounts, setAccounts] = useState<MailAccount[]>([]);
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
+    null,
+  );
   const [selectedView, setSelectedView] = useState<string>("inbox");
   const [unreadOnly, setUnreadOnly] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -74,6 +78,11 @@ export default function InboxScreen() {
   const [accountModalVisible, setAccountModalVisible] = useState(false);
   const [folderModalVisible, setFolderModalVisible] = useState(false);
   const [addAccountModalVisible, setAddAccountModalVisible] = useState(false);
+
+  // Batch selection
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
 
   // Search debounce
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -138,7 +147,7 @@ export default function InboxScreen() {
         setRefreshing(false);
       }
     },
-    [selectedView, selectedAccountId, unreadOnly, debouncedQuery]
+    [selectedView, selectedAccountId, unreadOnly, debouncedQuery],
   );
 
   useEffect(() => {
@@ -168,7 +177,7 @@ export default function InboxScreen() {
     const newStarred = !item.isStarred;
     // Optimistic update
     setMessages((prev) =>
-      prev.map((m) => (m.id === item.id ? { ...m, isStarred: newStarred } : m))
+      prev.map((m) => (m.id === item.id ? { ...m, isStarred: newStarred } : m)),
     );
 
     try {
@@ -176,9 +185,79 @@ export default function InboxScreen() {
     } catch (err) {
       // Revert on failure
       setMessages((prev) =>
-        prev.map((m) => (m.id === item.id ? { ...m, isStarred: !newStarred } : m))
+        prev.map((m) =>
+          m.id === item.id ? { ...m, isStarred: !newStarred } : m,
+        ),
       );
       Alert.alert("Error", "Could not update star status");
+    }
+  };
+
+  // Swipe-to-archive / swipe-to-delete on a single message
+  const handleArchiveOne = async (id: string) => {
+    const snapshot = messages;
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+    try {
+      await api.messages.batch([id], "archive");
+    } catch (err: any) {
+      setMessages(snapshot);
+      Alert.alert("Archive Failed", err.message || "Could not archive message");
+    }
+  };
+
+  const handleDeleteOne = async (id: string) => {
+    const snapshot = messages;
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+    try {
+      await api.messages.batch([id], "delete");
+    } catch (err: any) {
+      setMessages(snapshot);
+      Alert.alert("Delete Failed", err.message || "Could not delete message");
+    }
+  };
+
+  // Batch selection mode
+  const toggleSelectMode = () => {
+    setSelectMode((prev) => !prev);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleBatchAction = async (
+    action: "archive" | "delete" | "mark-read",
+  ) => {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    try {
+      setBatchLoading(true);
+      await api.messages.batch(ids, action);
+      if (action === "mark-read") {
+        setMessages((prev) =>
+          prev.map((m) => (ids.includes(m.id) ? { ...m, isRead: true } : m)),
+        );
+      } else {
+        setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+      }
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } catch (err: any) {
+      Alert.alert(
+        "Action Failed",
+        err.message || "Could not complete the batch action",
+      );
+    } finally {
+      setBatchLoading(false);
     }
   };
 
@@ -199,23 +278,38 @@ export default function InboxScreen() {
       edges={["top", "left", "right"]}
     >
       {/* Top Header & Search Bar */}
-      <View style={[styles.headerContainer, { borderBottomColor: colors.border }]}>
+      <View
+        style={[styles.headerContainer, { borderBottomColor: colors.border }]}
+      >
         <View style={styles.topRow}>
           <TouchableOpacity
-            style={[styles.accountSelectorButton, { backgroundColor: colors.surfaceHighlight }]}
+            style={[
+              styles.accountSelectorButton,
+              { backgroundColor: colors.surfaceHighlight },
+            ]}
             onPress={() => setAccountModalVisible(true)}
           >
             <Text
               numberOfLines={1}
-              style={[styles.accountSelectorText, { color: colors.textPrimary }]}
+              style={[
+                styles.accountSelectorText,
+                { color: colors.textPrimary },
+              ]}
             >
               {getAccountLabel()}
             </Text>
-            <ChevronDown size={16} color={colors.textSecondary} style={{ marginLeft: 4 }} />
+            <ChevronDown
+              size={16}
+              color={colors.textSecondary}
+              style={{ marginLeft: 4 }}
+            />
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.folderSelectorButton, { backgroundColor: colors.surfaceHighlight }]}
+            style={[
+              styles.folderSelectorButton,
+              { backgroundColor: colors.surfaceHighlight },
+            ]}
             onPress={() => setFolderModalVisible(true)}
           >
             <Text
@@ -224,14 +318,20 @@ export default function InboxScreen() {
             >
               {getViewLabel()}
             </Text>
-            <ChevronDown size={16} color={colors.textSecondary} style={{ marginLeft: 4 }} />
+            <ChevronDown
+              size={16}
+              color={colors.textSecondary}
+              style={{ marginLeft: 4 }}
+            />
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[
               styles.unreadChip,
               {
-                backgroundColor: unreadOnly ? colors.primaryLight : colors.surfaceHighlight,
+                backgroundColor: unreadOnly
+                  ? colors.primaryLight
+                  : colors.surfaceHighlight,
                 borderColor: unreadOnly ? colors.primary : colors.border,
               },
             ]}
@@ -246,6 +346,24 @@ export default function InboxScreen() {
               Unread
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.selectChip,
+              {
+                backgroundColor: selectMode
+                  ? colors.primaryLight
+                  : colors.surfaceHighlight,
+                borderColor: selectMode ? colors.primary : colors.border,
+              },
+            ]}
+            onPress={toggleSelectMode}
+          >
+            <ListChecks
+              size={15}
+              color={selectMode ? colors.primary : colors.textSecondary}
+            />
+          </TouchableOpacity>
         </View>
 
         {/* Search Bar */}
@@ -255,7 +373,11 @@ export default function InboxScreen() {
             { backgroundColor: colors.surface, borderColor: colors.border },
           ]}
         >
-          <Search size={18} color={colors.textMuted} style={styles.searchIcon} />
+          <Search
+            size={18}
+            color={colors.textMuted}
+            style={styles.searchIcon}
+          />
           <TextInput
             style={[styles.searchInput, { color: colors.textPrimary }]}
             placeholder="Search mail (e.g. from: invoice, subject: update)..."
@@ -275,13 +397,24 @@ export default function InboxScreen() {
 
       {/* Network / Error Notice */}
       {error && (
-        <View style={[styles.errorBar, { backgroundColor: colors.dangerLight }]}>
+        <View
+          style={[styles.errorBar, { backgroundColor: colors.dangerLight }]}
+        >
           <Text style={[styles.errorText, { color: colors.danger }]}>
             {error}
           </Text>
-          <TouchableOpacity onPress={() => fetchMessages(1)} style={styles.retryButton}>
-            <RotateCw size={14} color={colors.danger} style={{ marginRight: 4 }} />
-            <Text style={[styles.retryText, { color: colors.danger }]}>Retry</Text>
+          <TouchableOpacity
+            onPress={() => fetchMessages(1)}
+            style={styles.retryButton}
+          >
+            <RotateCw
+              size={14}
+              color={colors.danger}
+              style={{ marginRight: 4 }}
+            />
+            <Text style={[styles.retryText, { color: colors.danger }]}>
+              Retry
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -299,10 +432,15 @@ export default function InboxScreen() {
           data={messages}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <MessageCard
+            <SwipeableMessageRow
               message={item}
+              selectMode={selectMode}
+              selected={selectedIds.has(item.id)}
               onPress={() => router.push(`/message/${item.id}`)}
               onToggleStar={() => handleToggleStar(item)}
+              onToggleSelect={() => toggleSelected(item.id)}
+              onArchive={() => handleArchiveOne(item.id)}
+              onDelete={() => handleDeleteOne(item.id)}
             />
           )}
           refreshControl={
@@ -332,8 +470,8 @@ export default function InboxScreen() {
                   searchQuery
                     ? "No results matching your query."
                     : unreadOnly
-                    ? "You have caught up with all unread mail."
-                    : "This folder is currently empty."
+                      ? "You have caught up with all unread mail."
+                      : "This folder is currently empty."
                 }
                 actionTitle="Sync Now"
                 onAction={handleRefresh}
@@ -351,13 +489,108 @@ export default function InboxScreen() {
       )}
 
       {/* Floating Compose Button */}
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: colors.primary }]}
-        activeOpacity={0.8}
-        onPress={() => router.push("/compose")}
-      >
-        <Edit size={22} color="#FFFFFF" />
-      </TouchableOpacity>
+      {!selectMode && (
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: colors.primary }]}
+          activeOpacity={0.8}
+          onPress={() => router.push("/compose")}
+        >
+          <Edit size={22} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
+
+      {/* Batch Selection Action Bar */}
+      {selectMode && (
+        <View
+          style={[
+            styles.batchBar,
+            { backgroundColor: colors.surface, borderTopColor: colors.border },
+          ]}
+        >
+          <TouchableOpacity
+            style={styles.batchBtn}
+            disabled={batchLoading || selectedIds.size === 0}
+            onPress={() => handleBatchAction("mark-read")}
+          >
+            <MailOpen
+              size={18}
+              color={
+                selectedIds.size === 0 ? colors.textMuted : colors.textPrimary
+              }
+            />
+            <Text
+              style={[
+                styles.batchBtnText,
+                {
+                  color:
+                    selectedIds.size === 0
+                      ? colors.textMuted
+                      : colors.textPrimary,
+                },
+              ]}
+            >
+              Mark Read
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.batchBtn}
+            disabled={batchLoading || selectedIds.size === 0}
+            onPress={() => handleBatchAction("archive")}
+          >
+            <Archive
+              size={18}
+              color={
+                selectedIds.size === 0 ? colors.textMuted : colors.textPrimary
+              }
+            />
+            <Text
+              style={[
+                styles.batchBtnText,
+                {
+                  color:
+                    selectedIds.size === 0
+                      ? colors.textMuted
+                      : colors.textPrimary,
+                },
+              ]}
+            >
+              Archive
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.batchBtn}
+            disabled={batchLoading || selectedIds.size === 0}
+            onPress={() => handleBatchAction("delete")}
+          >
+            <Trash2
+              size={18}
+              color={selectedIds.size === 0 ? colors.textMuted : colors.danger}
+            />
+            <Text
+              style={[
+                styles.batchBtnText,
+                {
+                  color:
+                    selectedIds.size === 0 ? colors.textMuted : colors.danger,
+                },
+              ]}
+            >
+              Delete
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.batchBtn} onPress={toggleSelectMode}>
+            <X size={18} color={colors.textSecondary} />
+            <Text
+              style={[styles.batchBtnText, { color: colors.textSecondary }]}
+            >
+              Cancel
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Account Selector Modal */}
       <Modal
@@ -396,7 +629,9 @@ export default function InboxScreen() {
                   setAccountModalVisible(false);
                 }}
               >
-                <Text style={[styles.modalItemText, { color: colors.textPrimary }]}>
+                <Text
+                  style={[styles.modalItemText, { color: colors.textPrimary }]}
+                >
                   All Inboxes
                 </Text>
                 {selectedAccountId === null && (
@@ -422,11 +657,19 @@ export default function InboxScreen() {
                   }}
                 >
                   <View>
-                    <Text style={[styles.modalItemText, { color: colors.textPrimary }]}>
+                    <Text
+                      style={[
+                        styles.modalItemText,
+                        { color: colors.textPrimary },
+                      ]}
+                    >
                       {acc.label}
                     </Text>
                     <Text
-                      style={[styles.modalItemSubtext, { color: colors.textMuted }]}
+                      style={[
+                        styles.modalItemSubtext,
+                        { color: colors.textMuted },
+                      ]}
                     >
                       {acc.emailAddress}
                     </Text>
@@ -451,12 +694,17 @@ export default function InboxScreen() {
                   setAddAccountModalVisible(true);
                 }}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <View
+                  style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+                >
                   <Plus size={16} color={colors.primary} />
                   <Text
                     style={[
                       styles.modalItemText,
-                      { color: colors.primary, fontWeight: Typography.weights.semibold },
+                      {
+                        color: colors.primary,
+                        fontWeight: Typography.weights.semibold,
+                      },
                     ]}
                   >
                     Add Email Account
@@ -509,17 +757,23 @@ export default function InboxScreen() {
                       setFolderModalVisible(false);
                     }}
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <View
+                      style={{ flexDirection: "row", alignItems: "center" }}
+                    >
                       <IconComponent
                         size={18}
-                        color={isSelected ? colors.primary : colors.textSecondary}
+                        color={
+                          isSelected ? colors.primary : colors.textSecondary
+                        }
                         style={{ marginRight: 12 }}
                       />
                       <Text
                         style={[
                           styles.modalItemText,
                           {
-                            color: isSelected ? colors.primary : colors.textPrimary,
+                            color: isSelected
+                              ? colors.primary
+                              : colors.textPrimary,
                             fontWeight: isSelected
                               ? Typography.weights.semibold
                               : Typography.weights.regular,
@@ -602,6 +856,34 @@ const styles = StyleSheet.create({
   unreadChipText: {
     fontSize: Typography.sizes.xs,
     fontWeight: Typography.weights.semibold,
+  },
+  selectChip: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginLeft: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  batchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  batchBtn: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  batchBtnText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
+    marginTop: 4,
   },
   searchBar: {
     flexDirection: "row",

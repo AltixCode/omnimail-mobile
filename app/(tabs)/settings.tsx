@@ -26,6 +26,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Plus,
+  Shield,
+  X,
 } from "lucide-react-native";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -38,6 +40,7 @@ import {
 import { getDeviceToken } from "../../src/services/storage";
 import { MailAccount } from "../../src/types";
 import { Button } from "../../src/components/Button";
+import { Input } from "../../src/components/Input";
 import { AddAccountModal } from "../../src/components/AddAccountModal";
 import { Spacing, Typography } from "../../src/constants/theme";
 
@@ -56,10 +59,59 @@ export default function SettingsScreen() {
   const [testPushStatus, setTestPushStatus] = useState<string | null>(null);
   const [addAccountVisible, setAddAccountVisible] = useState(false);
 
+  // Trusted Senders (remote image auto-loading, synced with the web app)
+  const [trustedSenders, setTrustedSenders] = useState<
+    { id: string; email: string }[]
+  >([]);
+  const [loadingTrustedSenders, setLoadingTrustedSenders] = useState(true);
+  const [newSenderInput, setNewSenderInput] = useState("");
+  const [addingSender, setAddingSender] = useState(false);
+  const [trustedSenderError, setTrustedSenderError] = useState<string | null>(
+    null,
+  );
+
   useEffect(() => {
     loadAccounts();
     checkPushStatus();
+    loadTrustedSenders();
   }, []);
+
+  const loadTrustedSenders = async () => {
+    try {
+      setLoadingTrustedSenders(true);
+      const res = await api.settings.trustedSenders.list();
+      setTrustedSenders(res.senders || []);
+    } catch (err) {
+      console.warn("Failed to load trusted senders:", err);
+    } finally {
+      setLoadingTrustedSenders(false);
+    }
+  };
+
+  const handleAddTrustedSender = async () => {
+    const email = newSenderInput.trim();
+    if (!email) return;
+    setAddingSender(true);
+    setTrustedSenderError(null);
+    try {
+      const res = await api.settings.trustedSenders.add(email);
+      setTrustedSenders((prev) => [res.sender, ...prev]);
+      setNewSenderInput("");
+    } catch (err: any) {
+      setTrustedSenderError(err.message || "Failed to add trusted sender");
+    } finally {
+      setAddingSender(false);
+    }
+  };
+
+  const handleRemoveTrustedSender = async (email: string) => {
+    try {
+      await api.settings.trustedSenders.remove(email);
+      setTrustedSenders((prev) => prev.filter((s) => s.email !== email));
+    } catch (err) {
+      console.warn("Failed to remove trusted sender:", err);
+    }
+  };
 
   const loadAccounts = async () => {
     try {
@@ -489,6 +541,116 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* Trusted Senders (remote image privacy) */}
+        <View
+          style={[
+            styles.sectionCard,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
+        >
+          <View style={styles.sectionHeaderRow}>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Shield
+                size={20}
+                color={colors.textSecondary}
+                style={{ marginRight: 8 }}
+              />
+              <Text
+                style={[
+                  styles.sectionTitle,
+                  { color: colors.textPrimary, marginBottom: 0 },
+                ]}
+              >
+                Trusted Senders ({trustedSenders.length})
+              </Text>
+            </View>
+          </View>
+          <Text
+            style={[styles.trustedSendersHint, { color: colors.textMuted }]}
+          >
+            External images in emails are blocked by default to prevent senders
+            from tracking you. Senders and domains listed here will have their
+            images load automatically. Synced with the web app.
+          </Text>
+
+          <View style={styles.trustedSenderAddRow}>
+            <View style={{ flex: 1 }}>
+              <Input
+                placeholder="e.g. notifications@github.com or @company.com"
+                value={newSenderInput}
+                onChangeText={setNewSenderInput}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+              />
+            </View>
+            <TouchableOpacity
+              onPress={handleAddTrustedSender}
+              disabled={addingSender || !newSenderInput.trim()}
+              style={[
+                styles.trustedSenderAddButton,
+                {
+                  backgroundColor: colors.primary,
+                  opacity: addingSender || !newSenderInput.trim() ? 0.5 : 1,
+                },
+              ]}
+            >
+              {addingSender ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Plus size={18} color="#FFFFFF" />
+              )}
+            </TouchableOpacity>
+          </View>
+          {trustedSenderError && (
+            <Text style={[styles.trustedSenderError, { color: colors.danger }]}>
+              {trustedSenderError}
+            </Text>
+          )}
+
+          {loadingTrustedSenders ? (
+            <ActivityIndicator
+              size="small"
+              color={colors.primary}
+              style={{ marginTop: 12 }}
+            />
+          ) : trustedSenders.length === 0 ? (
+            <Text
+              style={[styles.trustedSendersEmpty, { color: colors.textMuted }]}
+            >
+              No trusted senders yet.
+            </Text>
+          ) : (
+            <View style={styles.trustedSendersList}>
+              {trustedSenders.map((sender) => (
+                <View
+                  key={sender.id}
+                  style={[
+                    styles.trustedSenderRow,
+                    { borderColor: colors.border },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.trustedSenderEmail,
+                      { color: colors.textPrimary },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {sender.email}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => handleRemoveTrustedSender(sender.email)}
+                    hitSlop={8}
+                  >
+                    <X size={16} color={colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
         {/* Logout Button */}
         <View style={styles.logoutWrapper}>
           <Button
@@ -660,5 +822,50 @@ const styles = StyleSheet.create({
   logoutWrapper: {
     marginTop: Spacing.sm,
     marginBottom: Spacing.xxxl,
+  },
+  trustedSendersHint: {
+    fontSize: Typography.sizes.xs,
+    lineHeight: 16,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  trustedSenderAddRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  trustedSenderAddButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  trustedSenderError: {
+    fontSize: Typography.sizes.xs,
+    marginTop: 6,
+  },
+  trustedSendersEmpty: {
+    fontSize: Typography.sizes.xs,
+    marginTop: 12,
+    textAlign: "center",
+  },
+  trustedSendersList: {
+    marginTop: 12,
+    gap: 8,
+  },
+  trustedSenderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  trustedSenderEmail: {
+    flex: 1,
+    fontSize: Typography.sizes.sm,
   },
 });

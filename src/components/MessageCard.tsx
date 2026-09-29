@@ -7,7 +7,14 @@ import {
   Pressable,
 } from "react-native";
 import { format, isToday, isYesterday, parseISO } from "date-fns";
-import { Star, Paperclip, Calendar, Mail, CheckCircle2 } from "lucide-react-native";
+import {
+  Star,
+  Paperclip,
+  Calendar,
+  Mail,
+  CheckCircle2,
+  Circle,
+} from "lucide-react-native";
 import { useTheme } from "../context/ThemeContext";
 import { MessageListItem } from "../types";
 import { Spacing, Typography } from "../constants/theme";
@@ -19,12 +26,16 @@ interface MessageCardProps {
   onToggleRead?: () => void;
   onArchive?: () => void;
   onDelete?: () => void;
+  selectMode?: boolean;
+  selected?: boolean;
 }
 
 export function MessageCard({
   message,
   onPress,
   onToggleStar,
+  selectMode,
+  selected,
 }: MessageCardProps) {
   const { colors } = useTheme();
 
@@ -55,20 +66,37 @@ export function MessageCard({
           backgroundColor: pressed
             ? colors.surfaceHighlight
             : message.isRead
-            ? colors.surface
-            : colors.surfaceElevated,
+              ? colors.surface
+              : colors.surfaceElevated,
           borderBottomColor: colors.border,
         },
       ]}
     >
-      <View style={styles.leftColumn}>
-        <View style={styles.unreadIndicatorSlot}>
-          {!message.isRead && (
-            <View
-              style={[styles.unreadDot, { backgroundColor: colors.unreadDot }]}
-            />
-          )}
-        </View>
+      <View style={[styles.leftColumn, selectMode && styles.leftColumnSelect]}>
+        {selectMode ? (
+          <View style={styles.selectSlot}>
+            {selected ? (
+              <CheckCircle2
+                size={20}
+                color={colors.primary}
+                fill={colors.primary}
+              />
+            ) : (
+              <Circle size={20} color={colors.textMuted} />
+            )}
+          </View>
+        ) : (
+          <View style={styles.unreadIndicatorSlot}>
+            {!message.isRead && (
+              <View
+                style={[
+                  styles.unreadDot,
+                  { backgroundColor: colors.unreadDot },
+                ]}
+              />
+            )}
+          </View>
+        )}
       </View>
 
       <View style={styles.contentColumn}>
@@ -143,7 +171,9 @@ export function MessageCard({
             >
               <Star
                 size={18}
-                color={message.isStarred ? colors.starActive : colors.starInactive}
+                color={
+                  message.isStarred ? colors.starActive : colors.starInactive
+                }
                 fill={message.isStarred ? colors.starActive : "transparent"}
               />
             </TouchableOpacity>
@@ -170,26 +200,34 @@ export function MessageCard({
                 },
               ]}
             >
-              <Text style={[styles.accountBadgeText, { color: colors.textMuted }]}>
+              <Text
+                style={[styles.accountBadgeText, { color: colors.textMuted }]}
+              >
                 {message.account.label}
               </Text>
             </View>
-            {message.folder?.name && message.folder.name.toUpperCase() !== "INBOX" && (
-              <View
-                style={[
-                  styles.accountBadge,
-                  {
-                    backgroundColor: colors.surfaceHighlight,
-                    borderColor: colors.borderSubtle,
-                    marginLeft: 6,
-                  },
-                ]}
-              >
-                <Text style={[styles.accountBadgeText, { color: colors.textMuted }]}>
-                  {message.folder.name}
-                </Text>
-              </View>
-            )}
+            {message.folder?.name &&
+              message.folder.name.toUpperCase() !== "INBOX" && (
+                <View
+                  style={[
+                    styles.accountBadge,
+                    {
+                      backgroundColor: colors.surfaceHighlight,
+                      borderColor: colors.borderSubtle,
+                      marginLeft: 6,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.accountBadgeText,
+                      { color: colors.textMuted },
+                    ]}
+                  >
+                    {message.folder.name}
+                  </Text>
+                </View>
+              )}
           </View>
         ) : null}
       </View>
@@ -209,6 +247,9 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     alignItems: "center",
   },
+  leftColumnSelect: {
+    width: 28,
+  },
   unreadIndicatorSlot: {
     width: 8,
     height: 8,
@@ -219,6 +260,12 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  selectSlot: {
+    width: 20,
+    height: 20,
+    justifyContent: "center",
+    alignItems: "center",
   },
   contentColumn: {
     flex: 1,

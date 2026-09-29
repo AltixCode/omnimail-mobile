@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { WebView } from "react-native-webview";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import {
@@ -24,11 +25,36 @@ import {
   Paperclip,
   FileText,
   Trash2,
+  Bold,
+  Italic,
+  Underline,
+  List,
 } from "lucide-react-native";
 import { useTheme } from "../src/context/ThemeContext";
 import { api } from "../src/services/api";
 import { MailAccount } from "../src/types";
 import { Spacing, Typography } from "../src/constants/theme";
+
+function plainTextToHtml(text: string): string {
+  const escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return escaped.replace(/\n/g, "<br>");
+}
+
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 export default function ComposeScreen() {
   const router = useRouter();
@@ -43,17 +69,104 @@ export default function ComposeScreen() {
     threadId?: string;
   }>();
 
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
   const [accounts, setAccounts] = useState<MailAccount[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>(
-    params.accountId || ""
+    params.accountId || "",
   );
   const [showCc, setShowCc] = useState<boolean>(Boolean(params.cc));
   const [to, setTo] = useState<string>(params.to || "");
   const [cc, setCc] = useState<string>(params.cc || "");
   const [subject, setSubject] = useState<string>(params.subject || "");
-  const [bodyText, setBodyText] = useState<string>(params.bodyText || "");
+
+  // Rich text body editor (react-native-webview contentEditable bridge)
+  const webviewRef = useRef<WebView>(null);
+  const initialEditorHtmlRef = useRef<string>(
+    params.bodyText ? plainTextToHtml(params.bodyText) : "",
+  );
+  const [editorHtml, setEditorHtml] = useState<string>(
+    initialEditorHtmlRef.current,
+  );
+  const [editorHeight, setEditorHeight] = useState<number>(250);
+
+  const runEditorCommand = (command: string) => {
+    webviewRef.current?.injectJavaScript(
+      `document.execCommand('${command}'); true;`,
+    );
+  };
+
+  // Built once so the WebView's `source` reference stays stable across
+  // re-renders -- if it changed on every keystroke the WebView would
+  // reload and the editor would lose focus/cursor position.
+  const [composeHtmlSource] = useState(() => {
+    const textColor = isDark ? "#E2E8F0" : "#1E293B";
+    const bgColor = isDark ? "#111827" : "#FFFFFF";
+    const placeholderColor = isDark ? "#64748B" : "#94A3B8";
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+          <style>
+            html, body { margin: 0; padding: 0; }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+              font-size: 15px;
+              line-height: 1.55;
+              color: ${textColor};
+              background-color: ${bgColor};
+              padding: 16px;
+              word-wrap: break-word;
+              overflow-wrap: break-word;
+            }
+            #editor { min-height: 200px; outline: none; }
+            #editor:empty:before {
+              content: attr(data-placeholder);
+              color: ${placeholderColor};
+            }
+            ul, ol { padding-left: 20px; }
+          </style>
+        </head>
+        <body>
+          <div id="editor" contenteditable="true" data-placeholder="Compose email..."></div>
+          <script>
+            var editor = document.getElementById('editor');
+            editor.innerHTML = ${JSON.stringify(initialEditorHtmlRef.current)};
+
+            function post(type, payload) {
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({ type: type, payload: payload }));
+              }
+            }
+            function reportHeight() {
+              post('height', document.body.scrollHeight);
+            }
+            function reportContent() {
+              post('content', editor.innerHTML);
+            }
+
+            editor.addEventListener('input', function () {
+              reportContent();
+              reportHeight();
+            });
+
+            reportHeight();
+            window.addEventListener('load', reportHeight);
+            var reportCount = 0;
+            var reportInterval = setInterval(function () {
+              reportHeight();
+              reportCount += 1;
+              if (reportCount > 10) clearInterval(reportInterval);
+            }, 300);
+            if (window.ResizeObserver) {
+              new ResizeObserver(reportHeight).observe(document.body);
+            }
+          </script>
+        </body>
+      </html>
+    `;
+  });
 
   interface LocalAttachment {
     name: string;
@@ -115,7 +228,7 @@ export default function ComposeScreen() {
         if (currentSum + incomingSum > MAX_TOTAL_SIZE) {
           Alert.alert(
             "Attachment Size Exceeded",
-            "Total attachment size cannot exceed 25 MB. Please select smaller files."
+            "Total attachment size cannot exceed 25 MB. Please select smaller files.",
           );
           return;
         }
@@ -138,7 +251,10 @@ export default function ComposeScreen() {
       return;
     }
     if (!to.trim()) {
-      Alert.alert("Missing Recipient", "Please enter at least one recipient email address in 'To'.");
+      Alert.alert(
+        "Missing Recipient",
+        "Please enter at least one recipient email address in 'To'.",
+      );
       return;
     }
     if (!subject.trim()) {
@@ -150,12 +266,14 @@ export default function ComposeScreen() {
       setSending(true);
 
       // Encode attachments to base64
-      let encodedAttachments: Array<{
-        filename: string;
-        content: string;
-        contentType: string;
-        size: number;
-      }> | undefined;
+      let encodedAttachments:
+        | Array<{
+            filename: string;
+            content: string;
+            contentType: string;
+            size: number;
+          }>
+        | undefined;
 
       if (attachments.length > 0) {
         encodedAttachments = await Promise.all(
@@ -169,7 +287,9 @@ export default function ComposeScreen() {
                 reader.onloadend = () => {
                   const resStr = (reader.result as string) || "";
                   const commaIdx = resStr.indexOf(",");
-                  resolve(commaIdx !== -1 ? resStr.slice(commaIdx + 1) : resStr);
+                  resolve(
+                    commaIdx !== -1 ? resStr.slice(commaIdx + 1) : resStr,
+                  );
                 };
                 reader.onerror = reject;
                 reader.readAsDataURL(blob);
@@ -185,7 +305,7 @@ export default function ComposeScreen() {
               contentType: att.mimeType,
               size: att.size,
             };
-          })
+          }),
         );
       }
 
@@ -194,7 +314,8 @@ export default function ComposeScreen() {
         to: to.trim(),
         cc: cc.trim() || undefined,
         subject: subject.trim(),
-        bodyText,
+        bodyText: htmlToPlainText(editorHtml),
+        bodyHtml: editorHtml,
         inReplyTo: params.inReplyTo,
         references: params.references,
         threadId: params.threadId,
@@ -211,7 +332,11 @@ export default function ComposeScreen() {
       }
     } catch (err: any) {
       console.error("Send error:", err);
-      Alert.alert("Send Failed", err.message || "Failed to dispatch email. Please check your credentials.");
+      Alert.alert(
+        "Send Failed",
+        err.message ||
+          "Failed to dispatch email. Please check your credentials.",
+      );
     } finally {
       setSending(false);
     }
@@ -240,7 +365,10 @@ export default function ComposeScreen() {
           <TouchableOpacity
             onPress={handlePickAttachment}
             disabled={sending}
-            style={[styles.attachButton, { backgroundColor: colors.surfaceHighlight }]}
+            style={[
+              styles.attachButton,
+              { backgroundColor: colors.surfaceHighlight },
+            ]}
           >
             <Paperclip size={18} color={colors.textPrimary} />
             {attachments.length > 0 && (
@@ -277,7 +405,10 @@ export default function ComposeScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
       >
-        <ScrollView style={styles.formScroll} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          style={styles.formScroll}
+          keyboardShouldPersistTaps="handled"
+        >
           {/* From Account Selector */}
           <TouchableOpacity
             style={[styles.fieldRow, { borderBottomColor: colors.border }]}
@@ -295,7 +426,11 @@ export default function ComposeScreen() {
                   ? `${selectedAccount.label} <${selectedAccount.emailAddress}>`
                   : "Select sending account..."}
               </Text>
-              <ChevronDown size={16} color={colors.textSecondary} style={{ marginLeft: 6 }} />
+              <ChevronDown
+                size={16}
+                color={colors.textSecondary}
+                style={{ marginLeft: 6 }}
+              />
             </View>
           </TouchableOpacity>
 
@@ -328,8 +463,12 @@ export default function ComposeScreen() {
 
           {/* Cc Field (Optional) */}
           {showCc && (
-            <View style={[styles.fieldRow, { borderBottomColor: colors.border }]}>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+            <View
+              style={[styles.fieldRow, { borderBottomColor: colors.border }]}
+            >
+              <Text
+                style={[styles.fieldLabel, { color: colors.textSecondary }]}
+              >
                 Cc:
               </Text>
               <TextInput
@@ -353,7 +492,10 @@ export default function ComposeScreen() {
             <TextInput
               style={[
                 styles.fieldInput,
-                { color: colors.textPrimary, fontWeight: Typography.weights.medium },
+                {
+                  color: colors.textPrimary,
+                  fontWeight: Typography.weights.medium,
+                },
               ]}
               placeholder="Subject"
               placeholderTextColor={colors.textMuted}
@@ -367,18 +509,36 @@ export default function ComposeScreen() {
             <View
               style={[
                 styles.attachmentsContainer,
-                { backgroundColor: colors.surfaceHighlight, borderBottomColor: colors.border },
+                {
+                  backgroundColor: colors.surfaceHighlight,
+                  borderBottomColor: colors.border,
+                },
               ]}
             >
               <View style={styles.attachmentsTopRow}>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Paperclip size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
-                  <Text style={[styles.attachmentsLabel, { color: colors.textSecondary }]}>
-                    Attachments ({attachments.length}) · {formatFileSize(totalAttachmentsSize)}
+                  <Paperclip
+                    size={14}
+                    color={colors.textSecondary}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.attachmentsLabel,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    Attachments ({attachments.length}) ·{" "}
+                    {formatFileSize(totalAttachmentsSize)}
                   </Text>
                 </View>
-                <TouchableOpacity onPress={handlePickAttachment} style={styles.addMoreBtn}>
-                  <Text style={[styles.addMoreText, { color: colors.primary }]}>+ Add more</Text>
+                <TouchableOpacity
+                  onPress={handlePickAttachment}
+                  style={styles.addMoreBtn}
+                >
+                  <Text style={[styles.addMoreText, { color: colors.primary }]}>
+                    + Add more
+                  </Text>
                 </TouchableOpacity>
               </View>
 
@@ -392,18 +552,33 @@ export default function ComposeScreen() {
                     key={idx}
                     style={[
                       styles.attachmentChip,
-                      { backgroundColor: colors.surface, borderColor: colors.border },
+                      {
+                        backgroundColor: colors.surface,
+                        borderColor: colors.border,
+                      },
                     ]}
                   >
-                    <FileText size={14} color={colors.primary} style={{ marginRight: 6 }} />
+                    <FileText
+                      size={14}
+                      color={colors.primary}
+                      style={{ marginRight: 6 }}
+                    />
                     <View style={{ maxWidth: 120 }}>
                       <Text
                         numberOfLines={1}
-                        style={[styles.attachmentChipName, { color: colors.textPrimary }]}
+                        style={[
+                          styles.attachmentChipName,
+                          { color: colors.textPrimary },
+                        ]}
                       >
                         {att.name}
                       </Text>
-                      <Text style={[styles.attachmentChipSize, { color: colors.textMuted }]}>
+                      <Text
+                        style={[
+                          styles.attachmentChipSize,
+                          { color: colors.textMuted },
+                        ]}
+                      >
                         {formatFileSize(att.size)}
                       </Text>
                     </View>
@@ -420,21 +595,76 @@ export default function ComposeScreen() {
             </View>
           )}
 
-          {/* Body Multiline Input */}
-          <TextInput
-            style={[
-              styles.bodyInput,
-              {
-                color: colors.textPrimary,
-              },
-            ]}
-            placeholder="Compose email..."
-            placeholderTextColor={colors.textMuted}
-            value={bodyText}
-            onChangeText={setBodyText}
-            multiline
-            textAlignVertical="top"
-          />
+          {/* Rich Text Toolbar */}
+          <View
+            style={[styles.rtToolbar, { borderBottomColor: colors.border }]}
+          >
+            <TouchableOpacity
+              onPress={() => runEditorCommand("bold")}
+              style={styles.rtToolbarButton}
+            >
+              <Bold size={17} color={colors.textPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => runEditorCommand("italic")}
+              style={styles.rtToolbarButton}
+            >
+              <Italic size={17} color={colors.textPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => runEditorCommand("underline")}
+              style={styles.rtToolbarButton}
+            >
+              <Underline size={17} color={colors.textPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => runEditorCommand("insertUnorderedList")}
+              style={styles.rtToolbarButton}
+            >
+              <List size={17} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Body Rich Text Editor */}
+          {Platform.OS === "web" ? (
+            <iframe
+              srcDoc={composeHtmlSource}
+              style={{
+                width: "100%",
+                minHeight: 250,
+                border: "none",
+                backgroundColor: isDark ? "#111827" : "#FFFFFF",
+              }}
+            />
+          ) : (
+            <WebView
+              ref={webviewRef}
+              originWhitelist={["*"]}
+              source={{ html: composeHtmlSource }}
+              style={[
+                styles.rtWebView,
+                {
+                  height: editorHeight,
+                  backgroundColor: isDark ? "#111827" : "#FFFFFF",
+                },
+              ]}
+              scalesPageToFit={false}
+              hideKeyboardAccessoryView
+              onMessage={(event) => {
+                try {
+                  const msg = JSON.parse(event.nativeEvent.data);
+                  if (
+                    msg.type === "height" &&
+                    typeof msg.payload === "number"
+                  ) {
+                    setEditorHeight(Math.max(200, Math.ceil(msg.payload)));
+                  } else if (msg.type === "content") {
+                    setEditorHtml(msg.payload);
+                  }
+                } catch {}
+              }}
+            />
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -478,11 +708,19 @@ export default function ComposeScreen() {
                   }}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.modalItemText, { color: colors.textPrimary }]}>
+                    <Text
+                      style={[
+                        styles.modalItemText,
+                        { color: colors.textPrimary },
+                      ]}
+                    >
                       {acc.label}
                     </Text>
                     <Text
-                      style={[styles.modalItemSubtext, { color: colors.textMuted }]}
+                      style={[
+                        styles.modalItemSubtext,
+                        { color: colors.textMuted },
+                      ]}
                     >
                       {acc.emailAddress}
                     </Text>
@@ -567,12 +805,20 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.xs,
     fontWeight: Typography.weights.semibold,
   },
-  bodyInput: {
-    flex: 1,
-    padding: Spacing.lg,
-    fontSize: Typography.sizes.base,
-    lineHeight: 22,
-    minHeight: 300,
+  rtToolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 18,
+  },
+  rtToolbarButton: {
+    padding: 4,
+  },
+  rtWebView: {
+    width: "100%",
+    minHeight: 250,
   },
   modalBackdrop: {
     flex: 1,
