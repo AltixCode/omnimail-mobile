@@ -524,3 +524,75 @@ it (lost two retries to this mid-session). Always check
 `GET /repos/{o}/{r}/actions/tasks` shows nothing `running`/`waiting`
 for this repo before dispatching another retry.
 
+## 13. Update (2026-09-29): submitted for App Store review
+
+With the user's explicit go-ahead, filled in every remaining App Store
+Connect gate and submitted build 21 (1.0) for review --
+`appStoreState: WAITING_FOR_REVIEW`, submitted 2026-09-29T07:58 UTC,
+Apple's own estimate is up to 48h.
+
+**Everything below was missing and had to be filled in** (none of it
+blocks a TestFlight-only build, which is why it went unnoticed through
+12+ TestFlight uploads this week):
+- **Free price schedule + 175-territory availability** -- an app with
+  neither is invisible to `reviewSubmissionItems` in total silence, see
+  project memory `asc-submission-recipe`. Public API:
+  `POST /appPriceSchedules` (manualPrices, the `p:10000` = $0.00 price
+  point) and `POST https://api.appstoreconnect.apple.com/v2/appAvailabilities`
+  (relationship is `territoryAvailabilities`, each entry a
+  `${local-id}`-referenced inline resource with its own `territory`
+  relationship -- `availableTerritories` is not a real relationship name
+  despite reading like the obvious one).
+- **Age rating declaration** -- computed `null` until every field is
+  answered; copied the shape from an app already in review (dicewit)
+  and adjusted `userGeneratedContent: true` (mail/calendar content) and
+  `advertising: false`, `messagingAndChat: false` (no ads, not a
+  chat app). Drop `ageRatingOverride` (v1) -- only `ageRatingOverrideV2`
+  is accepted, sending both 409s. Computed `FOUR_PLUS`.
+- **Copyright**, App Info subtitle, App Store version description /
+  keywords / promotional text / support+marketing URL, and App Review
+  contact + demo account + notes -- all plain public-API PATCHes,
+  see `prisma`-adjacent `scripts/ship/fill_asc.py`-style calls (not
+  saved as a standing script, was one-off). Subtitle is
+  **"Mail Aggregator, Not a Host"** and both the description and the
+  App Review notes lead with the same aggregator-not-a-host framing,
+  per the user's explicit ask.
+- **App Privacy (the nutrition label) and Content Rights Declaration**
+  -- confirmed (again) that these have no public API at all, iris-only,
+  browser-session-only. Declared six `appDataUsages` rows (EMAIL_ADDRESS,
+  NAME, EMAILS_OR_TEXT_MESSAGES, OTHER_USER_CONTENT, USER_ID, DEVICE_ID
+  -- all `DATA_LINKED_TO_YOU` / `APP_FUNCTIONALITY`, nothing for
+  tracking since there's no ad/analytics SDK) via
+  `POST /iris/v1/appDataUsages`, published with
+  `PATCH /iris/v1/appDataUsagesPublishState/{app}` (**the JSON `type`
+  in the body must be the singular `appDataUsagesPublishState`, not
+  the plural `appDataUsagePublishStates` GET returns as its own
+  resource type** -- sending the GET's own type name 409s
+  `ENTITY_ERROR.WRONG_TYPE`, this was not documented anywhere before
+  now). Content Rights set via `PATCH /iris/v1/apps/{id}`
+  `contentRightsDeclaration: "DOES_NOT_USE_THIRD_PARTY_CONTENT"`.
+- **Primary category was the actual blocker** on
+  `POST /reviewSubmissionItems`'s opaque
+  `409 STATE_ERROR.ENTITY_STATE_INVALID / check associated errors`.
+  The API never names it; the *App Information* page's own
+  "Add for Review" banner does, in plain English
+  ("You must select a primary category for your app.") -- confirms
+  project memory's existing advice to read the draft submission's own
+  banner rather than trust the API error. Set Productivity (primary) /
+  Utilities (secondary) via the category `<select>` (native select,
+  needed a JS `dispatchEvent(new Event('change'))` after setting
+  `.value` for React to pick it up -- a plain click-through kept
+  showing "Loading..." and never populated options in one pass).
+- Build 21 (not 20) ended up the one submitted -- a docs-only commit
+  pushed during this same stretch triggered its own full CI run, so a
+  newer build existed by the time submission was attempted. App Store
+  Connect's own "Newer Build Available" dialog caught this and refused
+  to let an older build through without an explicit confirm; re-pointed
+  the version's `build` relationship to 21 and linked it to Internal
+  Testers too before proceeding.
+
+**Not yet addressed**: a fresh TestFlight comment reports the tab bar
+sitting too low, sometimes covered by the home indicator -- almost
+certainly a missing safe-area bottom inset on the custom tab bar.
+Not fixed this session; next thing to look at.
+
