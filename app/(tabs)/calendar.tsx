@@ -250,14 +250,15 @@ export default function CalendarScreen() {
       if (deviceTz && (deviceTz === event.timezone || event.timezone.includes(deviceTz))) return null;
 
       const start = parseISO(event.startDate);
+      const end = parseISO(event.endDate);
       const origFormatter = new Intl.DateTimeFormat("en-US", {
         timeZone: event.timezone,
         hour: "numeric",
         minute: "2-digit",
-        hourCycle: "h12",
+        hour12: false,
       });
       const city = event.timezone.split("/").pop()?.replace(/_/g, " ") || event.timezone;
-      return `${origFormatter.format(start)} (${city})`;
+      return `${origFormatter.format(start)} - ${origFormatter.format(end)} (${city})`;
     } catch {
       return null;
     }
