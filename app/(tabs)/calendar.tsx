@@ -243,6 +243,26 @@ export default function CalendarScreen() {
     }
   };
 
+  const getOriginalTimezoneBadge = (event: CalendarEvent): string | null => {
+    if (event.isAllDay || !event.timezone || event.timezone === "UTC") return null;
+    try {
+      const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (deviceTz && (deviceTz === event.timezone || event.timezone.includes(deviceTz))) return null;
+
+      const start = parseISO(event.startDate);
+      const origFormatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: event.timezone,
+        hour: "numeric",
+        minute: "2-digit",
+        hourCycle: "h12",
+      });
+      const city = event.timezone.split("/").pop()?.replace(/_/g, " ") || event.timezone;
+      return `${origFormatter.format(start)} (${city})`;
+    } catch {
+      return null;
+    }
+  };
+
   return (
     <SafeAreaView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -438,6 +458,18 @@ export default function CalendarScreen() {
                       >
                         {formatEventTime(evt)}
                       </Text>
+                      {getOriginalTimezoneBadge(evt) && (
+                        <View
+                          style={[
+                            styles.eventTzBadge,
+                            { backgroundColor: "#EEF2FF", borderColor: "#C7D2FE" },
+                          ]}
+                        >
+                          <Text style={styles.eventTzBadgeText}>
+                            {getOriginalTimezoneBadge(evt)}
+                          </Text>
+                        </View>
+                      )}
                       {evt.calendar?.name && (
                         <View
                           style={[
@@ -944,5 +976,17 @@ const styles = StyleSheet.create({
     fontWeight: Typography.weights.medium,
     flex: 1,
     textAlign: "center",
+  },
+  eventTzBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    marginRight: 6,
+  },
+  eventTzBadgeText: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#4338CA",
   },
 });

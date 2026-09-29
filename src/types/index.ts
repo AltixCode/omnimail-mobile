@@ -103,6 +103,7 @@ export interface CalendarEvent {
   startDate: string;
   endDate: string;
   isAllDay: boolean;
+  timezone?: string | null;
   rrule?: string | null;
   calendar?: {
     id: string;
