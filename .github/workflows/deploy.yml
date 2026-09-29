@@ -311,16 +311,19 @@ jobs:
           : "${APP_STORE_CONNECT_API_KEY_CONTENT:?Missing APP_STORE_CONNECT_API_KEY_CONTENT}"
           : "${APP_STORE_CONNECT_API_KEY_ID:?Missing APP_STORE_CONNECT_API_KEY_ID}"
           : "${APP_STORE_CONNECT_API_KEY_ISSUER:?Missing APP_STORE_CONNECT_API_KEY_ISSUER}"
-          # This runner does not always export HOME for job steps -- an empty
-          # HOME would make the path below resolve to /.appstoreconnect,
-          # which fails ("Read-only file system") since / is macOS's sealed
-          # system volume. Fall back to RUNNER_TEMP (always set, always
-          # writable) when HOME is unset or empty.
-          : "${HOME:=${RUNNER_TEMP:-/tmp}}"
-          export HOME
           # altool does NOT accept a path to the key -- given --apiKey it
-          # searches four fixed directories and nowhere else.
-          API_KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          # searches four fixed directories and nowhere else, and it resolves
+          # "~" via the OS's real home directory (NSHomeDirectory/getpwuid),
+          # NOT via bash's $HOME env var. $HOME is also not always exported
+          # into job steps by this runner, so falling back to $HOME (or worse,
+          # $RUNNER_TEMP) writes the key somewhere altool will never look --
+          # it fails with "AuthKey file... could not be found" even though
+          # the file exists. Ask macOS directly for the real home directory
+          # instead, matching exactly what altool itself resolves.
+          REAL_HOME=$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $NF}')
+          : "${REAL_HOME:=$HOME}"
+          : "${REAL_HOME:=${RUNNER_TEMP:-/tmp}}"
+          API_KEY_DIR="$REAL_HOME/.appstoreconnect/private_keys"
           mkdir -p "$API_KEY_DIR"
           API_KEY_PATH="$API_KEY_DIR/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
           printf '%s' "$APP_STORE_CONNECT_API_KEY_CONTENT" > "$API_KEY_PATH"
