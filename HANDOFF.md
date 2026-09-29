@@ -461,7 +461,66 @@ account, 6 fictional-but-realistic messages, and 3 calendar events.
 Fixture data only; the fictional persona ("Jordan Rivera") and sender
 domains are all `@example.com`, not real people or companies.
 
-**CI**: pushed straight to `main` (this repo's CI/CD branch) after each
-round of fixes; the iOS/Android/TestFlight-upload pipeline is the same
-one documented in §9-§11 and needs no changes here.
+**CI, two more real fixes found getting this to actually land in
+TestFlight** (build 19, `VALID`, linked to Internal Testers):
+
+1. **iOS archive kept failing with "Revoke certificate... private key
+   not installed in your keychain" / "No profiles ... were found"**,
+   3 runs in a row, always on the same error. Root cause: this repo's
+   ephemeral-signing-keychain pattern (`security create-keychain` at
+   the top of the iOS job, `security delete-keychain` at the bottom)
+   deletes the keychain -- and therefore the private key -- at the end
+   of every run, but the certificate itself stays registered with
+   Apple. Enough of these orphaned "Created via API" Development
+   certificates had piled up (4 of them) that automatic signing could
+   no longer create a new one without an interactive revoke Xcode
+   can't do non-interactively. Fixed by deleting the 4 orphaned certs
+   via the App Store Connect API (`DELETE /certificates/{id}`) --
+   ids `4252YNGYB5`, `93YL84HHUH`, `HTKCQ28P3H`, `R33N6J7PL6`.
+   **This will recur** for this app and any other in the fleet using
+   the same ephemeral-keychain pattern -- worth periodically checking
+   `GET /certificates` for a pile of "Created via API" Development
+   certs and clearing them, or fixing the pattern to reuse one
+   certificate across runs instead of minting a new one each time.
+2. **Once past that, archive and export both succeeded but "Upload to
+   TestFlight" failed with `mkdir: /.appstoreconnect: Read-only file
+   system`.** This runner does not export `HOME` for job steps (
+   confirmed: no `HOME` key anywhere in the step's own env dump) --
+   `$HOME/.appstoreconnect/private_keys` silently became
+   `/.appstoreconnect/private_keys`, and `/` is macOS's sealed system
+   volume. Fixed in `.github/workflows/deploy.yml`'s "Upload to
+   TestFlight" step with `: "${HOME:=${RUNNER_TEMP:-/tmp}}"; export
+   HOME` before constructing the path. **This is very likely a
+   fleet-wide gap** -- any other app's deploy.yml that assumes `$HOME`
+   is set on this runner should get the same one-line fix.
+3. The **TestFlight auto-link step ran before Apple finished
+   processing the just-uploaded build** (`No build found with
+   buildNumber=19 (still processing?)`), so build 19 needed the same
+   manual `POST /betaGroups/{id}/relationships/builds` link the very
+   first build did. Not a bug in the auto-link script itself, just a
+   race between upload-processing time and the next step running
+   immediately -- a short retry/sleep loop in that step would fix it
+   properly if this keeps happening.
+
+**Android CI genuinely still has the "reports failed despite a fully
+successful build" issue from §9**, now reproduced 3 more times in this
+session across 2 different commits: Gradle logs `BUILD SUCCESSFUL`,
+both APK and AAB are written to `build/output/`, and the job is still
+marked `failed` with **zero error text anywhere in its own log** --
+the log just goes straight from a successful `bundleRelease` finish to
+`Job failed` a few steps later with nothing in between. Not
+root-caused this session either; does not block anything currently
+being asked for (Play upload is `ENABLE_PLAY_UPLOAD=false`, Play
+Console registration is next week) but will keep happening. Whoever
+looks at this next should check whether it's specific to this
+workflow's job structure (many conditional `if:`/`continue-on-error`
+steps) versus a generic Forgejo/`act` runner bug -- it does NOT
+reproduce on the iOS job in this same workflow run.
+
+**CI dispatch note for next time**: dispatching a new
+`workflow_dispatch` run while a previous one for the same workflow is
+still `running` cancels the in-progress run rather than queuing behind
+it (lost two retries to this mid-session). Always check
+`GET /repos/{o}/{r}/actions/tasks` shows nothing `running`/`waiting`
+for this repo before dispatching another retry.
 
