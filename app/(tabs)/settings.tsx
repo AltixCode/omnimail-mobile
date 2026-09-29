@@ -449,7 +449,7 @@ export default function SettingsScreen() {
                 onValueChange={handleTogglePush}
                 trackColor={{ false: colors.textMuted, true: colors.primary }}
                 thumbColor="#FFFFFF"
-                ios_backgroundColor={colors.textMuted}
+                ios_backgroundColor={colors.surface}
               />
             )}
           </View>
@@ -536,7 +536,7 @@ export default function SettingsScreen() {
               onValueChange={toggleTheme}
               trackColor={{ false: colors.textMuted, true: colors.primary }}
               thumbColor="#FFFFFF"
-              ios_backgroundColor={colors.textMuted}
+              ios_backgroundColor={colors.surface}
             />
           </View>
         </View>

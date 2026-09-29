@@ -634,7 +634,7 @@ export default function CalendarScreen() {
                   onValueChange={setNewIsAllDay}
                   trackColor={{ false: colors.textMuted, true: colors.primary }}
                   thumbColor="#FFFFFF"
-                  ios_backgroundColor={colors.textMuted}
+                  ios_backgroundColor={colors.surface}
                 />
               </View>
 

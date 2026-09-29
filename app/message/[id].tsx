@@ -317,17 +317,49 @@ export default function MessageDetailScreen() {
     }
   };
 
-  // Blocks remote <img> sources (http/https) in an HTML string, preserving
-  // the original URL in data-omnimail-src so it can be restored later
-  // without re-fetching the message. Mirrors the web app's DOMPurify hook.
+  // Blocks remote image loads (http/https and protocol-relative) in an
+  // HTML string before it ever reaches the WebView -- has to happen at
+  // the string level, before load, since blocking after the WebView has
+  // already parsed the markup is too late to stop the request itself
+  // (the whole point of blocking a tracking pixel). Mirrors the web
+  // app's DOMPurify hook, but covers the attribute/CSS shapes real email
+  // HTML actually uses beyond a plain <img src="...">.
+  const BLOCKED_IMG_PLACEHOLDER =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='28' viewBox='0 0 120 28'%3E%3Crect width='120' height='28' fill='%23f1f5f9' rx='4'/%3E%3Ctext x='60' y='18' font-size='10' font-family='sans-serif' fill='%2394a3b8' text-anchor='middle'%3EImage blocked%3C/text%3E%3C/svg%3E";
+  const REMOTE_URL = "(?:https?:)?\\/\\/[^\"'()\\s]+";
+
   const blockRemoteImages = (html: string): string => {
-    return html.replace(
-      /<img\b([^>]*?)\ssrc=(["'])(https?:\/\/[^"']+)\2([^>]*)>/gi,
-      (_match, pre: string, quote: string, src: string, post: string) => {
-        const restAttrs = `${pre}${post}`;
-        return `<img${restAttrs} data-omnimail-src="${src}" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='28' viewBox='0 0 120 28'%3E%3Crect width='120' height='28' fill='%23f1f5f9' rx='4'/%3E%3Ctext x='60' y='18' font-size='10' font-family='sans-serif' fill='%2394a3b8' text-anchor='middle'%3EImage blocked%3C/text%3E%3C/svg%3E" style="border:1px dashed #cbd5e1;border-radius:4px;">`;
-      },
+    let out = html;
+
+    // <img src="..."> / src='...'
+    out = out.replace(
+      /<img\b([^>]*?)\ssrc=(["'])((?:https?:)?\/\/[^"']+)\2([^>]*)>/gi,
+      (_m, pre: string, _q: string, src: string, post: string) =>
+        `<img${pre}${post} data-omnimail-src="${src}" src="${BLOCKED_IMG_PLACEHOLDER}" style="border:1px dashed #cbd5e1;border-radius:4px;">`,
     );
+
+    // srcset="..." on <img>/<source> -- responsive image candidates,
+    // strip entirely rather than trying to preserve them for restore.
+    out = out.replace(/\ssrcset=(["'])[^"']*\1/gi, "");
+
+    // background="..." attribute (legacy, still common in email HTML
+    // on <table>/<td>/<body>).
+    out = out.replace(
+      new RegExp(`\\sbackground=(["'])${REMOTE_URL}\\1`, "gi"),
+      "",
+    );
+
+    // CSS background-image: url(...) inside any style="..." attribute
+    // or <style> block.
+    out = out.replace(
+      new RegExp(
+        `background(-image)?\\s*:\\s*url\\(\\s*['"]?${REMOTE_URL}['"]?\\s*\\)`,
+        "gi",
+      ),
+      "background$1: none",
+    );
+
+    return out;
   };
 
   // Build clean HTML document for WebView

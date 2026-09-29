@@ -24,7 +24,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const colors = isDark ? Colors.dark : Colors.light;
 
   const toggleTheme = () => {
-    setMode((prev) => (prev === "dark" ? "light" : "dark"));
+    // Must flip off the computed isDark, not the raw mode string: mode
+    // starts as "system", which can already be displaying dark (if the
+    // device is in dark mode) without mode itself being the literal
+    // string "dark". Comparing against mode meant the first tap while
+    // still in "system" silently became "dark" -- no visible change --
+    // which read as the toggle not working / snapping back on.
+    setMode(isDark ? "light" : "dark");
   };
 
   return (
