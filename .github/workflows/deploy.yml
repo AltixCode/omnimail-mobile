@@ -311,6 +311,13 @@ jobs:
           : "${APP_STORE_CONNECT_API_KEY_CONTENT:?Missing APP_STORE_CONNECT_API_KEY_CONTENT}"
           : "${APP_STORE_CONNECT_API_KEY_ID:?Missing APP_STORE_CONNECT_API_KEY_ID}"
           : "${APP_STORE_CONNECT_API_KEY_ISSUER:?Missing APP_STORE_CONNECT_API_KEY_ISSUER}"
+          # This runner does not always export HOME for job steps -- an empty
+          # HOME would make the path below resolve to /.appstoreconnect,
+          # which fails ("Read-only file system") since / is macOS's sealed
+          # system volume. Fall back to RUNNER_TEMP (always set, always
+          # writable) when HOME is unset or empty.
+          : "${HOME:=${RUNNER_TEMP:-/tmp}}"
+          export HOME
           # altool does NOT accept a path to the key -- given --apiKey it
           # searches four fixed directories and nowhere else.
           API_KEY_DIR="$HOME/.appstoreconnect/private_keys"
