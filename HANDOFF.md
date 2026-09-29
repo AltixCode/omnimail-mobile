@@ -1,7 +1,7 @@
 # OmniMail Mobile Handoff Document
 
 > **Status**: Verified & Functional  
-> **Last Verified**: 2026-09-28  
+> **Last Verified**: 2026-09-29  
 > **Location**: `/Users/ata/Dev/mobile_expo_apps/omnimail`
 
 ---
@@ -595,4 +595,66 @@ blocks a TestFlight-only build, which is why it went unnoticed through
 sitting too low, sometimes covered by the home indicator -- almost
 certainly a missing safe-area bottom inset on the custom tab bar.
 Not fixed this session; next thing to look at.
+
+## 14. Update (2026-09-29): four TestFlight feedback items fixed, verified on-device, shipped (build 21 → next CI build)
+
+Four bugs reported via TestFlight against build 21 (post-submission), all
+fixed and confirmed working on the simulator before pushing (commit
+`94a94b5`):
+
+- **Tab bar covered by the home indicator** (`app/(tabs)/_layout.tsx`) --
+  `tabBarStyle` had a fixed `height`/`paddingBottom`, which overrides
+  React Navigation's own safe-area-aware sizing. Switched to
+  `useSafeAreaInsets()` and added `insets.bottom` to both. Confirmed via
+  screenshot: tab bar now sits ~42pt clear of the bottom edge instead of
+  flush to it.
+- **Dark Appearance toggle "turned back on"** (`src/context/ThemeContext.tsx`)
+  -- `toggleTheme` compared the raw `mode` string (`"system"|"light"|"dark"`)
+  against the literal `"dark"`, but `mode` starts as `"system"` and can
+  already be rendering dark (if the device is in dark mode) without `mode`
+  itself being `"dark"`. First tap while still in system mode silently
+  became `"dark"` -- no visible change -- which read as the toggle not
+  working. Fixed by flipping the derived `isDark` boolean instead of the
+  raw mode string. **Verified both directions on-device**: swiped the
+  switch off (light rendered, white background/dark text) then back on
+  (dark rendered, near-black background/white text) -- confirms the fix
+  works end-to-end, not just that the switch's own accessibility value
+  flips.
+- **"Gray button underneath" the toggles** (`app/(tabs)/settings.tsx`,
+  `app/(tabs)/calendar.tsx`) -- both `Switch` instances had
+  `ios_backgroundColor={colors.textMuted}` (a mid-gray), mismatched from
+  the surrounding card's `colors.surface` background. Native `UISwitch`'s
+  own `backgroundColor` layer (distinct from `trackColor`/tint) peeked out
+  around the track's rounded corners, especially visible on iOS 17+'s
+  redesigned `UISwitch`, reading as a second button behind the switch.
+  Changed to `ios_backgroundColor={colors.surface}` on all three affected
+  switches (Push Notifications, Dark Appearance, Calendar's "All Day").
+  Confirmed via screenshot: single seamless pill in both light and dark
+  mode, no halo.
+- **Remote images loading without permission** (`app/message/[id].tsx`) --
+  the existing `blockRemoteImages` only stripped plain `<img src="http...">`
+  tags. Hardened to also strip `srcset`, `background="..."` attributes, and
+  CSS `background-image: url(...)` (inline `style` or `<style>` blocks),
+  closer to the web app's DOMPurify-based coverage. **Not independently
+  re-tested on-device this round** -- the underlying feedback may have been
+  filed against a build that predated the original image-blocking feature
+  entirely (build 21 uploaded at 07:49, feedback filed 07:53).
+
+**idb/simulator automation gotcha, worth knowing for next time**: `idb ui
+tap` does **not** reliably register presses on native `Switch`/`CheckBox`
+elements on this iOS 27 simulator -- confirmed reproducibly (multiple
+attempts, including an `idb_companion` restart) with zero `AXValue` change,
+while a plain `TouchableOpacity` button on the same screen responded fine to
+the same tap mechanism. **`idb ui swipe`** (a short ~26pt horizontal swipe
+across the switch's center, `--duration 0.2`) reliably flips it instead. This
+easily reads as a real app bug if the swipe workaround isn't tried --
+budget for it when verifying any Switch-based fix via idb.
+
+Also: the `idb` CLI binary itself isn't always on `PATH` in a fresh shell --
+it lives at `/Users/ata/idbenv/bin/idb` (a venv), separate from
+`idb_companion`/`idb-repl` which are on Homebrew's PATH by default. Prepend
+`/Users/ata/idbenv/bin` if `idb: command not found`.
+
+Committed as `94a94b5` and pushed to `origin/main` (both GitHub and
+Forgejo remotes), triggering CI run `36541755764`.
 
