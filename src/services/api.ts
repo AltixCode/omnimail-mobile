@@ -241,6 +241,7 @@ export const api = {
         | "trash"
         | "archive"
         | "inbox"
+        | "spam"
         | "delete",
     ): Promise<{ success: boolean; affectedCount: number }> {
       return await request<{ success: boolean; affectedCount: number }>(
@@ -357,6 +358,8 @@ export const api = {
       unifiedCounts: {
         inboxUnread: number;
         starred: number;
+        spamUnread?: number;
+        spamCount?: number;
       };
     }> {
       return await request<any>("/api/folders");
@@ -364,10 +367,14 @@ export const api = {
   },
 
   sync: {
-    async trigger(accountId?: string): Promise<{ success: boolean }> {
+    async trigger(
+      params?: { accountId?: string; calendarOnly?: boolean } | string,
+    ): Promise<{ success: boolean }> {
+      const body =
+        typeof params === "string" ? { accountId: params } : params || {};
       return await request<{ success: boolean }>("/api/sync", {
         method: "POST",
-        body: JSON.stringify(accountId ? { accountId } : {}),
+        body: JSON.stringify(body),
       });
     },
   },
@@ -402,6 +409,10 @@ export const api = {
       startDate: string;
       endDate: string;
       isAllDay?: boolean;
+      rrule?: string;
+      guests?: string[];
+      meetingLink?: string;
+      sendInvites?: boolean;
     }): Promise<{ success: boolean; event: CalendarEvent }> {
       return await request<{ success: boolean; event: CalendarEvent }>(
         "/api/calendar",
@@ -410,6 +421,20 @@ export const api = {
           body: JSON.stringify(data),
         },
       );
+    },
+
+    async importIcs(data: {
+      calendarId?: string;
+      icsContent: string;
+    }): Promise<{ success: boolean; count: number; events: CalendarEvent[] }> {
+      return await request<{
+        success: boolean;
+        count: number;
+        events: CalendarEvent[];
+      }>("/api/calendar/import", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
     },
   },
 

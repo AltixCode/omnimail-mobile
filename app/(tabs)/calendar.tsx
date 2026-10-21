@@ -37,7 +37,13 @@ import {
   Check,
   Minus,
   X,
+  Upload,
+  Repeat,
+  Users,
+  Video,
 } from "lucide-react-native";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { api } from "../../src/services/api";
@@ -115,8 +121,13 @@ export default function CalendarScreen() {
     addHours(defaultStart(), 1),
   );
   const [newCalendarId, setNewCalendarId] = useState<string | null>(null);
+  const [newGuests, setNewGuests] = useState("");
+  const [newSendInvites, setNewSendInvites] = useState(true);
+  const [newMeetingLink, setNewMeetingLink] = useState("");
+  const [newRrule, setNewRrule] = useState("");
   const [creatingEvent, setCreatingEvent] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [importingIcs, setImportingIcs] = useState(false);
 
   const openCreateModal = () => {
     const start = defaultStart();
@@ -127,6 +138,10 @@ export default function CalendarScreen() {
     setNewStartDate(start);
     setNewEndDate(addHours(start, 1));
     setNewCalendarId(calendars[0]?.id || null);
+    setNewGuests("");
+    setNewSendInvites(true);
+    setNewMeetingLink("");
+    setNewRrule("");
     setCreateError(null);
     setCreateModalVisible(true);
   };
@@ -163,6 +178,12 @@ export default function CalendarScreen() {
     try {
       setCreatingEvent(true);
       setCreateError(null);
+
+      const guestList = newGuests
+        .split(/[,;\s]+/)
+        .map((g) => g.trim().toLowerCase())
+        .filter((g) => g.includes("@"));
+
       await api.calendar.createEvent({
         calendarId,
         summary: newSummary.trim(),
@@ -171,6 +192,10 @@ export default function CalendarScreen() {
         startDate: newStartDate.toISOString(),
         endDate: newEndDate.toISOString(),
         isAllDay: newIsAllDay,
+        guests: guestList.length > 0 ? guestList : undefined,
+        meetingLink: newMeetingLink.trim() || undefined,
+        sendInvites: newSendInvites,
+        rrule: newRrule || undefined,
       });
       setCreateModalVisible(false);
       await fetchCalendarData(true);
@@ -178,6 +203,54 @@ export default function CalendarScreen() {
       setCreateError(err.message || "Failed to create the event");
     } finally {
       setCreatingEvent(false);
+    }
+  };
+
+  const handleImportIcs = async () => {
+    try {
+      setImportingIcs(true);
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["text/calendar", "text/x-vcalendar", "*/*"],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || !result.assets[0]) return;
+
+      const file = result.assets[0];
+      let content = "";
+      if (Platform.OS === "web") {
+        const res = await fetch(file.uri);
+        content = await res.text();
+      } else {
+        content = await FileSystem.readAsStringAsync(file.uri);
+      }
+
+      if (!content.trim().includes("BEGIN:VCALENDAR")) {
+        Alert.alert(
+          "Invalid Calendar File",
+          "The selected file is not a valid iCalendar (.ics) file.",
+        );
+        return;
+      }
+
+      const targetCalendarId = selectedCalendarId || calendars[0]?.id;
+      const res = await api.calendar.importIcs({
+        calendarId: targetCalendarId || undefined,
+        icsContent: content,
+      });
+
+      Alert.alert(
+        "Import Successful",
+        `Successfully imported ${res.count} event(s) into your calendar.`,
+      );
+      await fetchCalendarData(true);
+    } catch (err: any) {
+      Alert.alert(
+        "Import Failed",
+        err.message || "Failed to import calendar file",
+      );
+    } finally {
+      setImportingIcs(false);
     }
   };
 
@@ -274,6 +347,32 @@ export default function CalendarScreen() {
         <Text style={[styles.screenTitle, { color: colors.textPrimary }]}>
           Calendar & Agenda
         </Text>
+        <TouchableOpacity
+          onPress={handleImportIcs}
+          disabled={importingIcs}
+          style={[
+            styles.importButton,
+            {
+              backgroundColor: colors.surfaceHighlight,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          {importingIcs ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Upload
+              size={15}
+              color={colors.textPrimary}
+              style={{ marginRight: 6 }}
+            />
+          )}
+          <Text
+            style={[styles.importButtonText, { color: colors.textPrimary }]}
+          >
+            Import .ics
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Calendar Filter Pills */}
@@ -753,6 +852,136 @@ export default function CalendarScreen() {
                 </>
               )}
 
+              <View style={{ marginBottom: Spacing.md }}>
+                <Text
+                  style={[
+                    styles.createFieldLabel,
+                    { color: colors.textSecondary },
+                  ]}
+                >
+                  Recurrence
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {[
+                    { label: "Does not repeat", value: "" },
+                    { label: "Daily", value: "FREQ=DAILY" },
+                    { label: "Weekly", value: "FREQ=WEEKLY" },
+                    {
+                      label: "Every weekday",
+                      value: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+                    },
+                    { label: "Monthly", value: "FREQ=MONTHLY" },
+                  ].map((item) => {
+                    const isSelected = newRrule === item.value;
+                    return (
+                      <TouchableOpacity
+                        key={item.label}
+                        onPress={() => setNewRrule(item.value)}
+                        style={[
+                          styles.calendarPill,
+                          {
+                            backgroundColor: isSelected
+                              ? colors.primaryLight
+                              : colors.surface,
+                            borderColor: isSelected
+                              ? colors.primary
+                              : colors.border,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.calendarPillText,
+                            {
+                              color: isSelected
+                                ? colors.primary
+                                : colors.textSecondary,
+                            },
+                          ]}
+                        >
+                          {item.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+
+              <Input
+                label="Guests / Attendees (Optional)"
+                placeholder="colleague@example.com, client@work.com"
+                value={newGuests}
+                onChangeText={setNewGuests}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+
+              {Boolean(newGuests.trim()) && (
+                <View style={styles.allDayRow}>
+                  <Text
+                    style={[
+                      styles.createFieldLabel,
+                      { color: colors.textSecondary, flex: 1, marginRight: 8 },
+                    ]}
+                  >
+                    Send email invitations with calendar RSVP
+                  </Text>
+                  <Switch
+                    value={newSendInvites}
+                    onValueChange={setNewSendInvites}
+                    trackColor={{
+                      false: colors.textMuted,
+                      true: colors.primary,
+                    }}
+                    thumbColor="#FFFFFF"
+                    ios_backgroundColor={colors.surface}
+                  />
+                </View>
+              )}
+
+              <View style={{ marginBottom: Spacing.xs }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: 4,
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.createFieldLabel,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    Video Meeting Link (Optional)
+                  </Text>
+                  {!newMeetingLink && (
+                    <TouchableOpacity
+                      onPress={() =>
+                        setNewMeetingLink("https://meet.google.com/new")
+                      }
+                    >
+                      <Text
+                        style={{
+                          fontSize: Typography.sizes.xs,
+                          color: colors.primary,
+                          fontWeight: Typography.weights.semibold,
+                        }}
+                      >
+                        + Google Meet
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Input
+                  placeholder="https://meet.google.com/..., Zoom, or Teams"
+                  value={newMeetingLink}
+                  onChangeText={setNewMeetingLink}
+                  autoCapitalize="none"
+                />
+              </View>
+
               <Input
                 label="Location (Optional)"
                 placeholder="Meeting room, address, or link"
@@ -791,6 +1020,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  importButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  importButtonText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
   },
   screenTitle: {
     fontSize: Typography.sizes.xl,

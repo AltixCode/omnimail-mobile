@@ -32,6 +32,7 @@ import {
   Plus,
   ListChecks,
   MailOpen,
+  ShieldAlert,
 } from "lucide-react-native";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -47,6 +48,7 @@ const FOLDERS = [
   { id: "starred", label: "Starred", icon: Star },
   { id: "sent", label: "Sent", icon: Send },
   { id: "archive", label: "Archive", icon: Archive },
+  { id: "spam", label: "Spam", icon: ShieldAlert },
   { id: "trash", label: "Trash", icon: Trash2 },
   { id: "all", label: "All Mail", icon: SlidersHorizontal },
 ];
@@ -235,7 +237,7 @@ export default function InboxScreen() {
   };
 
   const handleBatchAction = async (
-    action: "archive" | "delete" | "mark-read",
+    action: "archive" | "delete" | "mark-read" | "inbox" | "spam",
   ) => {
     if (selectedIds.size === 0) return;
     const ids = Array.from(selectedIds);
@@ -464,14 +466,26 @@ export default function InboxScreen() {
               />
             ) : (
               <EmptyState
-                icon={<Inbox size={48} color={colors.textMuted} />}
-                title="No messages found"
+                icon={
+                  selectedView === "spam" ? (
+                    <ShieldAlert size={48} color={colors.textMuted} />
+                  ) : (
+                    <Inbox size={48} color={colors.textMuted} />
+                  )
+                }
+                title={
+                  selectedView === "spam"
+                    ? "No spam messages"
+                    : "No messages found"
+                }
                 description={
                   searchQuery
                     ? "No results matching your query."
-                    : unreadOnly
-                      ? "You have caught up with all unread mail."
-                      : "This folder is currently empty."
+                    : selectedView === "spam"
+                      ? "Hooray, your spam folder is completely clean!"
+                      : unreadOnly
+                        ? "You have caught up with all unread mail."
+                        : "This folder is currently empty."
                 }
                 actionTitle="Sync Now"
                 onAction={handleRefresh}
@@ -558,6 +572,46 @@ export default function InboxScreen() {
               Archive
             </Text>
           </TouchableOpacity>
+
+          {selectedView === "spam" ? (
+            <TouchableOpacity
+              style={styles.batchBtn}
+              disabled={batchLoading || selectedIds.size === 0}
+              onPress={() => handleBatchAction("inbox")}
+            >
+              <Inbox
+                size={18}
+                color={selectedIds.size === 0 ? colors.textMuted : "#10B981"}
+              />
+              <Text
+                style={[
+                  styles.batchBtnText,
+                  { color: selectedIds.size === 0 ? colors.textMuted : "#10B981" },
+                ]}
+              >
+                Not Spam
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.batchBtn}
+              disabled={batchLoading || selectedIds.size === 0}
+              onPress={() => handleBatchAction("spam")}
+            >
+              <ShieldAlert
+                size={18}
+                color={selectedIds.size === 0 ? colors.textMuted : "#F59E0B"}
+              />
+              <Text
+                style={[
+                  styles.batchBtnText,
+                  { color: selectedIds.size === 0 ? colors.textMuted : "#F59E0B" },
+                ]}
+              >
+                Spam
+              </Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={styles.batchBtn}

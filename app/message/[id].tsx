@@ -34,6 +34,8 @@ import {
   FileText,
   Shield,
   ShieldCheck,
+  ShieldAlert,
+  Inbox,
 } from "lucide-react-native";
 import { useTheme } from "../../src/context/ThemeContext";
 import { api } from "../../src/services/api";
@@ -205,6 +207,30 @@ export default function MessageDetailScreen() {
       await api.messages.update(message.id, { isRead: newRead });
     } catch {
       setMessage({ ...message, isRead: !newRead });
+    }
+  };
+
+  const isSpam = Boolean(
+    message?.folder?.specialUse === "\\Junk" ||
+      message?.folder?.name?.toLowerCase().includes("spam") ||
+      message?.folder?.name?.toLowerCase().includes("junk"),
+  );
+
+  const handleToggleSpam = async () => {
+    if (!message) return;
+    const action = isSpam ? "inbox" : "spam";
+    const label = isSpam ? "Move to Inbox" : "Report Spam";
+    try {
+      setActionLoading(true);
+      await api.messages.batch([message.id], action);
+      router.back();
+    } catch (err: any) {
+      Alert.alert(
+        `${label} Failed`,
+        err.message || `Could not ${label.toLowerCase()}`,
+      );
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -520,6 +546,17 @@ export default function MessageDetailScreen() {
             style={styles.navActionButton}
           >
             <Archive size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={handleToggleSpam}
+            style={styles.navActionButton}
+          >
+            {isSpam ? (
+              <Inbox size={20} color="#10B981" />
+            ) : (
+              <ShieldAlert size={20} color="#F59E0B" />
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
