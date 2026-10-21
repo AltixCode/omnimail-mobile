@@ -364,7 +364,6 @@ jobs:
           python3 "$RUNNER_TEMP/tf_autolink.py" "$BUNDLE_ID" "$APP_BUILD"
 
       - name: Stash iOS Artifacts
-        if: github.server_url == 'https://github.com'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -546,6 +545,7 @@ jobs:
         # the whole run red after everything else already succeeded. Flip it
         # to true once the app is registered in Play Console.
         if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.submit_to_stores == true) || vars.ENABLE_STORE_UPLOADS == 'true') && vars.ENABLE_PLAY_UPLOAD != 'false' }}
+        continue-on-error: true
         uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
@@ -560,7 +560,6 @@ jobs:
           releaseName: ${{ steps.version.outputs.app_name }} ${{ steps.version.outputs.app_version }}
 
       - name: Stash Android Artifacts
-        if: github.server_url == 'https://github.com'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
