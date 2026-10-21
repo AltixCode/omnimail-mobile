@@ -364,6 +364,7 @@ jobs:
           python3 "$RUNNER_TEMP/tf_autolink.py" "$BUNDLE_ID" "$APP_BUILD"
 
       - name: Stash iOS Artifacts
+        if: github.server_url == 'https://github.com'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -560,6 +561,7 @@ jobs:
           releaseName: ${{ steps.version.outputs.app_name }} ${{ steps.version.outputs.app_version }}
 
       - name: Stash Android Artifacts
+        if: github.server_url == 'https://github.com'
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
