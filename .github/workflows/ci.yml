@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # This repository has pull requests turned off on Forgejo, so a branch is
+  # checked by dispatching CI on it.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
