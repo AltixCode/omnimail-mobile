@@ -74,7 +74,7 @@ jobs:
             exit 0
           fi
           npx sentry-expo-upload-sourcemaps dist
-          echo "### Source maps" >> "$GITHUB_STEP_SUMMARY"
+          # Forgejo discards job summaries, so the debug ids go to the log.
           for m in dist/*/_expo/static/js/*/*.map; do
-            node -e 'const m=require(process.argv[1]);console.log("- "+require("path").basename(process.argv[1])+" debug id "+m.debugId)' "$PWD/$m" >> "$GITHUB_STEP_SUMMARY"
+            node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(process.argv[1]+" debug id "+m.debugId)' "$m"
           done
