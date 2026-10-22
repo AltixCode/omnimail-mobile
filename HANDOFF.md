@@ -658,3 +658,47 @@ it lives at `/Users/ata/idbenv/bin/idb` (a venv), separate from
 Committed as `94a94b5` and pushed to `origin/main` (both GitHub and
 Forgejo remotes), triggering CI run `36541755764`.
 
+
+## Update (2026-10-22): crash reporting to Altix ErrorTrack — branch `feat/errortrack`, not merged
+
+Pull requests are turned off for this repository on Forgejo, so this branch is waiting to be merged by hand. CI on a branch is started with a dispatch:
+`POST /api/v1/repos/AltixCode/omnimail-mobile/actions/workflows/ci.yml/dispatches {"ref":"feat/errortrack"}`.
+
+**What it does**
+- `@sentry/react-native ~6.10.0` reports to Altix ErrorTrack, which is Sentry-compatible. `src/services/errorTracking.ts` starts it only when `EXPO_PUBLIC_ERRORTRACK_DSN` is set at build time; without a DSN the app sends nothing.
+- Privacy settings:
+  - no default PII, no screenshots, no view hierarchy, no tracing;
+  - console breadcrumbs are dropped;
+  - query strings, request bodies, cookies, headers and the user are stripped before an event is sent.
+- Settings > Diagnostics has a "Send test error report" button, shown only when a DSN is set.
+- `metro.config.js` uses `getSentryExpoConfig`, so each bundle and its map carry a debug id.
+- CI (`ci.yml`) exports with `--source-maps` and runs `sentry-expo-upload-sourcemaps` when the `ERRORTRACK_URL` and `ERRORTRACK_AUTH_TOKEN` secrets exist; otherwise it skips the upload and passes.
+- `deploy.yml`:
+  - takes the DSN from the `ERRORTRACK_DSN` secret;
+  - lets the Xcode/Gradle phases upload maps only when a token exists (`SENTRY_DISABLE_AUTO_UPLOAD` otherwise);
+  - keeps native debug-file upload off, because ErrorTrack has no dSYM/ProGuard store.
+
+**Verified on 2026-10-22, against a local dev ErrorTrack**
+- Local `npx sentry-expo-upload-sourcemaps dist`: bundle and map stored under debug id `27d14ba1…`.
+- Forgejo CI run 69, on the macOS host runner: both platforms exported and uploaded, and the job passed.
+  - The Android bundle exists only in CI; its debug id `28bd4b76…` is in ErrorTrack's artifact tables.
+  - Runs 67 and 68 failed for two reasons, both now fixed:
+    - ErrorTrack returned an absolute chunk-upload URL built from its own `APP_URL` (localhost). It now returns a relative URL, as Sentry does; fixed in altix-errortrack `1113b4d`.
+    - CI parsed a `.map` file with `require()`.
+- An event in the RN SDK's Hermes shape, carrying a real bytecode offset from the uploaded map, symbolicated to `src/services/errorTracking.ts:62:5` with the exact source line.
+
+**UNKNOWN**
+- A crash thrown by a real installed build. `simctl` hangs on this Mac and there is no Android AVD, so no device run happened.
+- Upload from the Xcode/Gradle build phases in `deploy.yml`. Not run.
+
+**Before merging or releasing**
+1. ErrorTrack PR #2 (branch `feat/sentry-parity-v2`) must be deployed first. Production does not have the source-map endpoints or the chunk-upload fix yet.
+2. Create the `omnimail-mobile` project in production ErrorTrack. Then set five Forgejo repo secrets:
+   - `ERRORTRACK_URL` (`https://errortrack.altixcode.com`)
+   - `ERRORTRACK_ORG`
+   - `ERRORTRACK_PROJECT`
+   - `ERRORTRACK_AUTH_TOKEN` (scope `project:releases`)
+   - `ERRORTRACK_DSN`
+
+   The dev-server values used for the test have been deleted.
+3. App Store privacy label: declare Crash Data (not linked to identity, not used for tracking). Do the same in the Play data-safety form.
