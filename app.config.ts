@@ -17,8 +17,25 @@ import baseConfig from "./app.json";
 const VERSION = process.env.APP_VERSION || baseConfig.expo.version || "1.0.0";
 const BUILD = process.env.APP_BUILD || "1";
 
+/**
+ * Altix ErrorTrack (Sentry-compatible). The DSN is public by design (it only allows sending
+ * events); without it the app reports nothing. The URL / org / project are only read by the
+ * native build steps that upload source maps — the token for that comes from SENTRY_AUTH_TOKEN
+ * in the build environment, never from this file.
+ */
+const ERRORTRACK_DSN = process.env.EXPO_PUBLIC_ERRORTRACK_DSN || "";
+const sentryPlugin: [string, Record<string, string>] = [
+  "@sentry/react-native/expo",
+  {
+    url: process.env.SENTRY_URL || "https://errortrack.altixcode.com/",
+    organization: process.env.SENTRY_ORG || "",
+    project: process.env.SENTRY_PROJECT || "",
+  },
+];
+
 const config: ExpoConfig = {
   ...(baseConfig.expo as ExpoConfig),
+  plugins: [...((baseConfig.expo as ExpoConfig).plugins ?? []), sentryPlugin],
   version: VERSION,
   ios: {
     ...baseConfig.expo.ios,
@@ -32,6 +49,7 @@ const config: ExpoConfig = {
   owner: process.env.EXPO_OWNER || "altixcodes-team",
   extra: {
     ...(baseConfig.expo as ExpoConfig).extra,
+    errortrackDsn: ERRORTRACK_DSN,
     eas: {
       projectId:
         process.env.EAS_PROJECT_ID ||

@@ -53,6 +53,19 @@ env:
   LANG: en_US.UTF-8
   LC_ALL: en_US.UTF-8
   DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+  # Error tracking. The DSN is baked into the JS bundle; without it the app
+  # sends nothing. The Xcode and Gradle phases the Sentry config plugin adds
+  # upload each release bundle's source map -- only when a token exists, since
+  # sentry-cli fails the build otherwise. ErrorTrack has no native debug-file
+  # (dSYM / ProGuard) store, so those uploads stay off.
+  EXPO_PUBLIC_ERRORTRACK_DSN: ${{ secrets.ERRORTRACK_DSN }}
+  SENTRY_URL: ${{ secrets.ERRORTRACK_URL }}
+  SENTRY_ORG: ${{ secrets.ERRORTRACK_ORG }}
+  SENTRY_PROJECT: ${{ secrets.ERRORTRACK_PROJECT }}
+  SENTRY_AUTH_TOKEN: ${{ secrets.ERRORTRACK_AUTH_TOKEN }}
+  SENTRY_DISABLE_AUTO_UPLOAD: ${{ secrets.ERRORTRACK_AUTH_TOKEN == '' }}
+  SENTRY_DISABLE_XCODE_DEBUG_UPLOAD: 'true'
+  SENTRY_DISABLE_NATIVE_DEBUG_UPLOAD: 'true'
 
 jobs:
   build-ios:

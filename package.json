@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@sentry/react-native": "~6.10.0",
     "date-fns": "^4.1.0",
     "expo": "~52.0.37",
     "expo-asset": "~11.0.5",

@@ -39,16 +39,39 @@ jobs:
       # The closest thing to "does the app actually load" without a device: a
       # real Metro production build resolves every import and every route, so
       # a broken module path or a bad expo-router file cannot reach a build.
+      # --source-maps makes the Sentry Metro serializer stamp a debug id into
+      # each bundle and its map, which is what ErrorTrack matches a stack to.
       - name: Export iOS and Android bundles
         run: |
-          npx expo export --platform ios --output-dir dist/ios
-          npx expo export --platform android --output-dir dist/android
+          npx expo export --platform ios --output-dir dist/ios --source-maps
+          npx expo export --platform android --output-dir dist/android --source-maps
         env:
           EXPO_NO_TELEMETRY: '1'
+          EXPO_PUBLIC_ERRORTRACK_DSN: ${{ secrets.ERRORTRACK_DSN }}
 
       - name: Report bundle size
         run: |
           echo "### Bundle size" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          du -sh dist/ios/_expo/static/js/* dist/android/_expo/static/js/* >> "$GITHUB_STEP_SUMMARY"
+          ls dist/ios/_expo/static/js/*/* dist/android/_expo/static/js/*/* | grep -v '\.map$' | xargs du -sh >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # Proves the upload path end to end on every run that has the secrets.
+      # Without them (forks, a fresh clone) the step says so and passes: the
+      # app itself sends nothing when no DSN is configured.
+      - name: Upload source maps to ErrorTrack
+        env:
+          SENTRY_URL: ${{ secrets.ERRORTRACK_URL }}
+          SENTRY_ORG: ${{ secrets.ERRORTRACK_ORG }}
+          SENTRY_PROJECT: ${{ secrets.ERRORTRACK_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.ERRORTRACK_AUTH_TOKEN }}
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ] || [ -z "$SENTRY_URL" ]; then
+            echo "ErrorTrack secrets not set; skipping source map upload."
+            exit 0
+          fi
+          npx sentry-expo-upload-sourcemaps dist
+          echo "### Source maps" >> "$GITHUB_STEP_SUMMARY"
+          for m in dist/*/_expo/static/js/*/*.map; do
+            node -e 'const m=require(process.argv[1]);console.log("- "+require("path").basename(process.argv[1])+" debug id "+m.debugId)' "$PWD/$m" >> "$GITHUB_STEP_SUMMARY"
+          done
