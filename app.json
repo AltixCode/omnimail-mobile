@@ -44,7 +44,8 @@
           "color": "#3b82f6"
         }
       ],
-      "./plugins/withUIScene"
+      "./plugins/withUIScene",
+      "./plugins/withPodsDeploymentTarget"
     ],
     "extra": {
       "eas": {
