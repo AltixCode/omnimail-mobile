@@ -691,14 +691,13 @@ Pull requests are turned off for this repository on Forgejo, so this branch is w
 - A crash thrown by a real installed build. `simctl` hangs on this Mac and there is no Android AVD, so no device run happened.
 - Upload from the Xcode/Gradle build phases in `deploy.yml`. Not run.
 
-**Before merging or releasing**
-1. ErrorTrack PR #2 (branch `feat/sentry-parity-v2`) must be deployed first. Production does not have the source-map endpoints or the chunk-upload fix yet.
-2. Create the `omnimail-mobile` project in production ErrorTrack. Then set five Forgejo repo secrets:
-   - `ERRORTRACK_URL` (`https://errortrack.altixcode.com`)
-   - `ERRORTRACK_ORG`
-   - `ERRORTRACK_PROJECT`
-   - `ERRORTRACK_AUTH_TOKEN` (scope `project:releases`)
-   - `ERRORTRACK_DSN`
-
-   The dev-server values used for the test have been deleted.
-3. App Store privacy label: declare Crash Data (not linked to identity, not used for tracking). Do the same in the Play data-safety form.
+**Production, 2026-10-23**: done, merged to `main` (`78e4045`)
+- ErrorTrack PR #2 is merged and deployed:
+  - the prod DB was backed up first to `/root/backups/altix_errortrack-pre-parity-20261023T063153Z.dump` on the host;
+  - the migrations were rehearsed on a restored copy;
+  - all 49 were then applied in prod.
+- The production ErrorTrack project `omnimail-mobile` exists under org `altix-code-internal` (ingest id 531, platform react-native). Its CI token is an ORG token named "omnimail-mobile Forgejo CI (source maps)", scopes `org:read project:releases`. Revoke it in ErrorTrack's org token settings.
+- All five `ERRORTRACK_*` Forgejo secrets point at production.
+- CI run 70 uploaded both platforms' maps to production; they are in the artifact tables under the project.
+- A verification event in environment `ci-verification` symbolicated in production to `errorTracking.ts:62:5`.
+- Still to do: App Store privacy label and Play data-safety form must declare Crash Data before the next store review.
