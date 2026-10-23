@@ -701,3 +701,15 @@ Pull requests are turned off for this repository on Forgejo, so this branch is w
 - CI run 70 uploaded both platforms' maps to production; they are in the artifact tables under the project.
 - A verification event in environment `ci-verification` symbolicated in production to `errorTracking.ts:62:5`.
 - Still to do: App Store privacy label and Play data-safety form must declare Crash Data before the next store review.
+
+**Release pipeline and simulator verification, 2026-10-23**
+- The first main build with Sentry failed to archive on Xcode 27. The cause was Sentry Cocoa's resource-bundle target `Sentry-Sentry`, which declares iOS 11.
+  - Fixed by `plugins/withPodsDeploymentTarget.js` (commit `6a659bd`). It lifts every pod target below the app's deployment target in the Podfile `post_install`.
+  - Reproduced and verified with a local Release archive before pushing.
+- The release run for `6a659bd` passed:
+  - iOS archive succeeded, and the Xcode phase uploaded `main.jsbundle` and its map (debug id `27d14ba1…`) to production ErrorTrack;
+  - TestFlight upload succeeded (Delivery UUID `5b2f9181-b982-4d06-8363-bb2eed5a159e`);
+  - the Android Gradle phase uploaded `index.android.bundle` and its map (debug id `28bd4b76…`).
+- Release build on the iOS 27 simulator (`iPhone17Test`), with the production DSN, signed in against a local OmniMail backend (`web_apps/omnimail` on :3000) using a throwaway test account, `errortrack-sim@omnimail.test`, in the local `omnimail_dev` DB only:
+  - **Settings > Diagnostics > Send test error report**: the event reached production. It is symbolicated to `app/(tabs)/settings.tsx:569`, then `src/services/errorTracking.ts:62`, with source context, and `user` is null.
+  - **Native crash** (SIGSEGV sent to the app process): reported on the next launch as `fatal`, platform `cocoa`, mechanism `signal`, unhandled. App frames read `<redacted>` because ErrorTrack has no dSYM store, so native frames stay unsymbolicated by design.
