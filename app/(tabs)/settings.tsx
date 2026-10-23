@@ -28,7 +28,9 @@ import {
   Plus,
   Shield,
   X,
+  Bug,
 } from "lucide-react-native";
+import { errorTrackingEnabled, sendTestErrorReport } from "../../src/services/errorTracking";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { api } from "../../src/services/api";
@@ -57,6 +59,7 @@ export default function SettingsScreen() {
   const [registeringPush, setRegisteringPush] = useState(false);
   const [sendingTestPush, setSendingTestPush] = useState(false);
   const [testPushStatus, setTestPushStatus] = useState<string | null>(null);
+  const [testErrorId, setTestErrorId] = useState<string | null>(null);
   const [addAccountVisible, setAddAccountVisible] = useState(false);
 
   // Trusted Senders (remote image auto-loading, synced with the web app)
@@ -540,6 +543,41 @@ export default function SettingsScreen() {
             />
           </View>
         </View>
+
+        {/* Diagnostics: only in builds that report errors */}
+        {errorTrackingEnabled && (
+          <View
+            style={[
+              styles.sectionCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <View style={styles.sectionHeaderRow}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Bug size={20} color={colors.textSecondary} style={{ marginRight: 8 }} />
+                <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                  Diagnostics
+                </Text>
+              </View>
+            </View>
+            <Text style={[styles.trustedSendersHint, { color: colors.textMuted }]}>
+              Crash reports go to Altix ErrorTrack without your identity, IP address or email
+              content. Send a test report to check that they arrive.
+            </Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={() => setTestErrorId(sendTestErrorReport() ?? null)}
+              style={[styles.trustedSenderAddButton, { backgroundColor: colors.primary, alignSelf: "flex-start", width: "auto", minHeight: 46, paddingHorizontal: 16 }]}
+            >
+              <Text style={{ color: "#FFFFFF", fontWeight: "600" }}>Send test error report</Text>
+            </TouchableOpacity>
+            {testErrorId && (
+              <Text selectable style={[styles.trustedSendersHint, { color: colors.textMuted, marginTop: 8 }]}>
+                Sent — event {testErrorId}
+              </Text>
+            )}
+          </View>
+        )}
 
         {/* Trusted Senders (remote image privacy) */}
         <View

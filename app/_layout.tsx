@@ -1,4 +1,5 @@
 import React, { useEffect } from "react";
+import { Sentry } from "../src/services/errorTracking";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
@@ -86,7 +87,7 @@ function RootNavigation() {
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   return (
     <ThemeProvider>
       <AuthProvider>
@@ -95,6 +96,9 @@ export default function RootLayout() {
     </ThemeProvider>
   );
 }
+
+// Reports render errors and unhandled exceptions (a no-op when no DSN was built in).
+export default Sentry.wrap(RootLayout);
 
 const styles = StyleSheet.create({
   loadingScreen: {
