@@ -701,6 +701,15 @@ Pull requests are turned off for this repository on Forgejo, so this branch is w
 - CI run 70 uploaded both platforms' maps to production; they are in the artifact tables under the project.
 - A verification event in environment `ci-verification` symbolicated in production to `errorTracking.ts:62:5`.
 - Still to do: App Store privacy label and Play data-safety form must declare Crash Data before the next store review.
+  - **Privacy label notes.** Crash reports go to our own ErrorTrack (first party, not tracking, not used for ads).
+  - Native crashes reported by the Sentry Cocoa/Android SDK carry `user.id` = a random per-install UUID. The SDK generates it on first launch, and it resets on reinstall.
+    - Owner decision (2026-10-24): keep it. It is random and not tied to identity.
+    - JS errors do not carry it, because `beforeSend` drops `user`. Native crash reports bypass the JS `beforeSend`, so they keep it.
+  - App Store label: **Crash Data**, purpose App Functionality, *not linked to the user's identity*, *not used for tracking*.
+    - The install id is not an account, email or device-level identifier (not IDFA/IDFV).
+    - If Apple review reads it as a Device ID, add **Device ID** with the same answers: not linked, no tracking.
+  - Play data-safety: **App info and performance > Crash logs** and **Diagnostics**. Collected, not shared, processed ephemerally: no. Optional: no. Purpose: Analytics / App functionality.
+    - Same install-id note applies under **Device or other IDs** if Play review asks.
 
 **Release pipeline and simulator verification, 2026-10-23**
 - The first main build with Sentry failed to archive on Xcode 27. The cause was Sentry Cocoa's resource-bundle target `Sentry-Sentry`, which declares iOS 11.
@@ -711,5 +720,5 @@ Pull requests are turned off for this repository on Forgejo, so this branch is w
   - TestFlight upload succeeded (Delivery UUID `5b2f9181-b982-4d06-8363-bb2eed5a159e`);
   - the Android Gradle phase uploaded `index.android.bundle` and its map (debug id `28bd4b76…`).
 - Release build on the iOS 27 simulator (`iPhone17Test`), with the production DSN, signed in against a local OmniMail backend (`web_apps/omnimail` on :3000) using a throwaway test account, `errortrack-sim@omnimail.test`, in the local `omnimail_dev` DB only:
-  - **Settings > Diagnostics > Send test error report**: the event reached production. It is symbolicated to `app/(tabs)/settings.tsx:569`, then `src/services/errorTracking.ts:62`, with source context, and `user` is null.
-  - **Native crash** (SIGSEGV sent to the app process): reported on the next launch as `fatal`, platform `cocoa`, mechanism `signal`, unhandled. App frames read `<redacted>` because ErrorTrack has no dSYM store, so native frames stay unsymbolicated by design.
+  - **Settings > Diagnostics > Send test error report**: the event reached production. It is symbolicated to `app/(tabs)/settings.tsx:569`, then `src/services/errorTracking.ts:62`, with source context, and `user` is null (JS errors only — see the privacy notes above about native crashes).
+  - **Native crash** (SIGSEGV sent to the app process): reported on the next launch as `fatal`, platform `cocoa`, mechanism `signal`, unhandled. It carries the per-install `user.id`, which was kept by owner decision. App frames read `<redacted>` because ErrorTrack has no dSYM store, so native frames stay unsymbolicated by design.
