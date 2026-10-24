@@ -22,6 +22,7 @@ import { Spacing, Typography } from "../constants/theme";
 interface MessageCardProps {
   message: MessageListItem;
   onPress: () => void;
+  onLongPress?: () => void;
   onToggleStar?: () => void;
   onToggleRead?: () => void;
   onArchive?: () => void;
@@ -33,6 +34,7 @@ interface MessageCardProps {
 export function MessageCard({
   message,
   onPress,
+  onLongPress,
   onToggleStar,
   selectMode,
   selected,
@@ -60,6 +62,7 @@ export function MessageCard({
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
       style={({ pressed }) => [
         styles.card,
         {

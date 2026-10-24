@@ -242,13 +242,15 @@ export const api = {
         | "archive"
         | "inbox"
         | "spam"
-        | "delete",
+        | "delete"
+        | "move",
+      folderId?: string,
     ): Promise<{ success: boolean; affectedCount: number }> {
       return await request<{ success: boolean; affectedCount: number }>(
         "/api/messages/batch",
         {
           method: "POST",
-          body: JSON.stringify({ messageIds, action }),
+          body: JSON.stringify({ messageIds, action, folderId }),
         },
       );
     },

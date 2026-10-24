@@ -33,6 +33,7 @@ import {
   ListChecks,
   MailOpen,
   ShieldAlert,
+  FolderInput,
 } from "lucide-react-native";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -41,6 +42,7 @@ import { MessageListItem, MailAccount, Folder } from "../../src/types";
 import { SwipeableMessageRow } from "../../src/components/SwipeableMessageRow";
 import { EmptyState } from "../../src/components/EmptyState";
 import { AddAccountModal } from "../../src/components/AddAccountModal";
+import { MoveFolderModal } from "../../src/components/MoveFolderModal";
 import { Spacing, Typography } from "../../src/constants/theme";
 
 const FOLDERS = [
@@ -80,6 +82,10 @@ export default function InboxScreen() {
   const [accountModalVisible, setAccountModalVisible] = useState(false);
   const [folderModalVisible, setFolderModalVisible] = useState(false);
   const [addAccountModalVisible, setAddAccountModalVisible] = useState(false);
+  const [moveModalVisible, setMoveModalVisible] = useState(false);
+  const [targetMessageIdsForMove, setTargetMessageIdsForMove] = useState<
+    string[]
+  >([]);
 
   // Batch selection
   const [selectMode, setSelectMode] = useState(false);
@@ -263,6 +269,100 @@ export default function InboxScreen() {
     }
   };
 
+  const handleExecuteMove = async (
+    action: "inbox" | "archive" | "spam" | "trash" | "move",
+    folderId?: string,
+  ) => {
+    if (targetMessageIdsForMove.length === 0) return;
+    try {
+      setBatchLoading(true);
+      await api.messages.batch(targetMessageIdsForMove, action, folderId);
+      const setIds = new Set(targetMessageIdsForMove);
+      setMessages((prev) => prev.filter((m) => !setIds.has(m.id)));
+      setSelectedIds(new Set());
+      setSelectMode(false);
+      loadAccounts();
+    } catch (err: any) {
+      Alert.alert("Move Failed", err.message || "Could not move messages");
+    } finally {
+      setBatchLoading(false);
+      setTargetMessageIdsForMove([]);
+    }
+  };
+
+  const handleRowLongPress = (item: MessageListItem) => {
+    Alert.alert(
+      item.subject || "(No Subject)",
+      `From: ${item.fromName || item.fromAddress}`,
+      [
+        {
+          text: "Move to Folder...",
+          onPress: () => {
+            setTargetMessageIdsForMove([item.id]);
+            setMoveModalVisible(true);
+          },
+        },
+        selectedView === "spam"
+          ? {
+              text: "Not Spam (Move to Inbox)",
+              onPress: async () => {
+                try {
+                  setBatchLoading(true);
+                  await api.messages.batch([item.id], "inbox");
+                  setMessages((prev) => prev.filter((m) => m.id !== item.id));
+                  loadAccounts();
+                } catch (err: any) {
+                  Alert.alert("Error", err.message || "Failed to mark not spam");
+                } finally {
+                  setBatchLoading(false);
+                }
+              },
+            }
+          : {
+              text: "Report Spam",
+              onPress: async () => {
+                try {
+                  setBatchLoading(true);
+                  await api.messages.batch([item.id], "spam");
+                  setMessages((prev) => prev.filter((m) => m.id !== item.id));
+                  loadAccounts();
+                } catch (err: any) {
+                  Alert.alert("Error", err.message || "Failed to report spam");
+                } finally {
+                  setBatchLoading(false);
+                }
+              },
+            },
+        {
+          text: item.isRead ? "Mark as Unread" : "Mark as Read",
+          onPress: async () => {
+            try {
+              await api.messages.update(item.id, { isRead: !item.isRead });
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === item.id ? { ...m, isRead: !item.isRead } : m,
+                ),
+              );
+            } catch {}
+          },
+        },
+        {
+          text: "Select Messages",
+          onPress: () => {
+            setSelectMode(true);
+            setSelectedIds(new Set([item.id]));
+          },
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => handleDeleteOne(item.id),
+        },
+        { text: "Cancel", style: "cancel" },
+      ],
+    );
+  };
+
   const getAccountLabel = () => {
     if (!selectedAccountId) return "All Inboxes";
     const found = accounts.find((a) => a.id === selectedAccountId);
@@ -439,6 +539,7 @@ export default function InboxScreen() {
               selectMode={selectMode}
               selected={selectedIds.has(item.id)}
               onPress={() => router.push(`/message/${item.id}`)}
+              onLongPress={() => handleRowLongPress(item)}
               onToggleStar={() => handleToggleStar(item)}
               onToggleSelect={() => toggleSelected(item.id)}
               onArchive={() => handleArchiveOne(item.id)}
@@ -612,6 +713,35 @@ export default function InboxScreen() {
               </Text>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity
+            style={styles.batchBtn}
+            disabled={batchLoading || selectedIds.size === 0}
+            onPress={() => {
+              setTargetMessageIdsForMove(Array.from(selectedIds));
+              setMoveModalVisible(true);
+            }}
+          >
+            <FolderInput
+              size={18}
+              color={
+                selectedIds.size === 0 ? colors.textMuted : colors.textPrimary
+              }
+            />
+            <Text
+              style={[
+                styles.batchBtnText,
+                {
+                  color:
+                    selectedIds.size === 0
+                      ? colors.textMuted
+                      : colors.textPrimary,
+                },
+              ]}
+            >
+              Move
+            </Text>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.batchBtn}
@@ -854,6 +984,21 @@ export default function InboxScreen() {
           loadAccounts();
           handleRefresh();
         }}
+      />
+
+      {/* Move Folder Modal */}
+      <MoveFolderModal
+        visible={moveModalVisible}
+        onClose={() => {
+          setMoveModalVisible(false);
+          setTargetMessageIdsForMove([]);
+        }}
+        onSelectDestination={handleExecuteMove}
+        title={
+          targetMessageIdsForMove.length > 1
+            ? `Move ${targetMessageIdsForMove.length} Messages`
+            : "Move Message"
+        }
       />
     </SafeAreaView>
   );

@@ -10,6 +10,7 @@ interface SwipeableMessageRowProps {
   selectMode: boolean;
   selected: boolean;
   onPress: () => void;
+  onLongPress?: () => void;
   onToggleStar: () => void;
   onToggleSelect: () => void;
   onArchive: () => void;
@@ -23,6 +24,7 @@ export function SwipeableMessageRow({
   selectMode,
   selected,
   onPress,
+  onLongPress,
   onToggleStar,
   onToggleSelect,
   onArchive,
@@ -111,6 +113,7 @@ export function SwipeableMessageRow({
         <MessageCard
           message={message}
           onPress={selectMode ? onToggleSelect : onPress}
+          onLongPress={onLongPress}
           onToggleStar={selectMode ? undefined : onToggleStar}
           selectMode={selectMode}
           selected={selected}

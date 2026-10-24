@@ -36,7 +36,9 @@ import {
   ShieldCheck,
   ShieldAlert,
   Inbox,
+  FolderInput,
 } from "lucide-react-native";
+import { MoveFolderModal } from "../../src/components/MoveFolderModal";
 import { useTheme } from "../../src/context/ThemeContext";
 import { api } from "../../src/services/api";
 import { getServerUrl, getAuthToken } from "../../src/services/storage";
@@ -54,6 +56,7 @@ export default function MessageDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [moveModalVisible, setMoveModalVisible] = useState(false);
 
   // Remote image privacy: blocked by default, same policy as the web app.
   const [trustedSenders, setTrustedSenders] = useState<Set<string>>(new Set());
@@ -242,6 +245,22 @@ export default function MessageDetailScreen() {
       router.back();
     } catch (err: any) {
       Alert.alert("Archive Failed", err.message || "Could not archive message");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleMoveToFolder = async (
+    action: "inbox" | "archive" | "spam" | "trash" | "move",
+    folderId?: string,
+  ) => {
+    if (!message) return;
+    try {
+      setActionLoading(true);
+      await api.messages.batch([message.id], action, folderId);
+      router.back();
+    } catch (err: any) {
+      Alert.alert("Move Failed", err.message || "Could not move message");
     } finally {
       setActionLoading(false);
     }
@@ -549,6 +568,13 @@ export default function MessageDetailScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
+            onPress={() => setMoveModalVisible(true)}
+            style={styles.navActionButton}
+          >
+            <FolderInput size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
             onPress={handleToggleSpam}
             style={styles.navActionButton}
           >
@@ -643,6 +669,45 @@ export default function MessageDetailScreen() {
             </View>
           </View>
         </View>
+
+        {/* Spam Banner */}
+        {isSpam && (
+          <View
+            style={[
+              styles.spamBanner,
+              {
+                backgroundColor: isDark
+                  ? "rgba(245, 158, 11, 0.15)"
+                  : "#FEF3C7",
+                borderColor: isDark
+                  ? "rgba(245, 158, 11, 0.3)"
+                  : "#FDE68A",
+              },
+            ]}
+          >
+            <View style={styles.spamBannerRow}>
+              <ShieldAlert size={16} color="#D97706" />
+              <Text
+                style={[
+                  styles.spamBannerText,
+                  { color: isDark ? "#FCD34D" : "#92400E" },
+                ]}
+              >
+                This conversation was classified as spam.
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.notSpamBtn}
+              onPress={handleToggleSpam}
+              disabled={actionLoading}
+            >
+              <Inbox size={14} color="#FFFFFF" />
+              <Text style={styles.notSpamBtnText}>
+                Not Spam (Move to Inbox)
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Remote Image Privacy Banner */}
         {message.bodyHtml ? (
@@ -912,6 +977,12 @@ export default function MessageDetailScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      <MoveFolderModal
+        visible={moveModalVisible}
+        onClose={() => setMoveModalVisible(false)}
+        onSelectDestination={handleMoveToFolder}
+      />
     </SafeAreaView>
   );
 }
@@ -1019,6 +1090,39 @@ const styles = StyleSheet.create({
   bodyContainer: {
     padding: Spacing.lg,
     minHeight: 240,
+  },
+  spamBanner: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.sm,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: Spacing.sm,
+    gap: 10,
+  },
+  spamBannerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  spamBannerText: {
+    flex: 1,
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.medium,
+  },
+  notSpamBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "#10B981",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    gap: 6,
+  },
+  notSpamBtnText: {
+    color: "#FFFFFF",
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
   },
   privacyBanner: {
     marginHorizontal: Spacing.lg,
