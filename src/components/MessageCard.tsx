@@ -14,6 +14,7 @@ import {
   Mail,
   CheckCircle2,
   Circle,
+  Clock,
 } from "lucide-react-native";
 import { useTheme } from "../context/ThemeContext";
 import { MessageListItem } from "../types";
@@ -43,7 +44,10 @@ export function MessageCard({
 
   const formatDate = (dateStr: string) => {
     try {
-      const date = parseISO(dateStr);
+      const date = parseISO(message.scheduledAt || dateStr);
+      if (message.isScheduled) {
+        return format(date, "MMM d, h:mm a");
+      }
       if (isToday(date)) {
         return format(date, "h:mm a");
       }
@@ -56,8 +60,16 @@ export function MessageCard({
     }
   };
 
-  const senderDisplayName =
+  let senderDisplayName =
     message.fromName || message.fromAddress.split("@")[0] || "Unknown";
+  if (message.isScheduled) {
+    let toStr = message.toAddresses || "";
+    try {
+      const parsed = JSON.parse(toStr);
+      if (Array.isArray(parsed)) toStr = parsed.join(", ");
+    } catch {}
+    senderDisplayName = `To: ${toStr}`;
+  }
 
   return (
     <Pressable
@@ -194,6 +206,28 @@ export function MessageCard({
 
         {message.account?.label ? (
           <View style={styles.footerRow}>
+            {message.isScheduled && (
+              <View
+                style={[
+                  styles.accountBadge,
+                  {
+                    backgroundColor: colors.primaryLight,
+                    borderColor: colors.primary,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 3,
+                    marginRight: 6,
+                  },
+                ]}
+              >
+                <Clock size={11} color={colors.primary} />
+                <Text
+                  style={[styles.accountBadgeText, { color: colors.primary, fontWeight: "600" }]}
+                >
+                  Scheduled
+                </Text>
+              </View>
+            )}
             <View
               style={[
                 styles.accountBadge,

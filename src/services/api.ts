@@ -266,20 +266,48 @@ export const api = {
       inReplyTo?: string;
       references?: string;
       threadId?: string;
+      scheduledAt?: string;
+      timezone?: string;
       attachments?: Array<{
         filename: string;
         content: string; // base64
         contentType: string;
         size?: number;
       }>;
-    }): Promise<{ success: boolean; messageId?: string }> {
-      return await request<{ success: boolean; messageId?: string }>(
+    }): Promise<{ success: boolean; messageId?: string; scheduled?: boolean; scheduledId?: string }> {
+      return await request<{ success: boolean; messageId?: string; scheduled?: boolean; scheduledId?: string }>(
         "/api/messages/send",
         {
           method: "POST",
           body: JSON.stringify(data),
         },
       );
+    },
+
+    scheduled: {
+      async list(accountId?: string): Promise<{ messages: MessageListItem[]; total: number }> {
+        const qs = accountId ? `?accountId=${accountId}` : "";
+        return await request<{ messages: MessageListItem[]; total: number }>(`/api/messages/scheduled${qs}`);
+      },
+      async get(id: string): Promise<{ message: MessageDetail; thread?: MessageDetail[] }> {
+        return await request<{ message: MessageDetail; thread?: MessageDetail[] }>(`/api/messages/scheduled/${id}`);
+      },
+      async update(id: string, data: any): Promise<{ success: boolean; scheduledEmail: any }> {
+        return await request<{ success: boolean; scheduledEmail: any }>(`/api/messages/scheduled/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify(data),
+        });
+      },
+      async sendNow(id: string): Promise<{ success: boolean }> {
+        return await request<{ success: boolean }>(`/api/messages/scheduled/${id}/send-now`, {
+          method: "POST",
+        });
+      },
+      async delete(id: string): Promise<{ success: boolean }> {
+        return await request<{ success: boolean }>(`/api/messages/scheduled/${id}`, {
+          method: "DELETE",
+        });
+      },
     },
   },
 
@@ -512,6 +540,29 @@ export const api = {
             method: "DELETE",
           },
         );
+      },
+    },
+
+    timezone: {
+      async get(): Promise<{ timezoneMode: string; timezone: string | null }> {
+        return await request<{ timezoneMode: string; timezone: string | null }>("/api/settings/timezone");
+      },
+      async update(data: {
+        timezoneMode: "automatic" | "manual";
+        timezone?: string;
+      }): Promise<{
+        success: boolean;
+        timezoneMode: string;
+        timezone: string | null;
+      }> {
+        return await request<{
+          success: boolean;
+          timezoneMode: string;
+          timezone: string | null;
+        }>("/api/settings/timezone", {
+          method: "PATCH",
+          body: JSON.stringify(data),
+        });
       },
     },
   },

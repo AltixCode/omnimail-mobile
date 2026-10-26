@@ -34,6 +34,7 @@ import {
   MailOpen,
   ShieldAlert,
   FolderInput,
+  Clock,
 } from "lucide-react-native";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -49,6 +50,7 @@ const FOLDERS = [
   { id: "inbox", label: "Inbox", icon: Inbox },
   { id: "starred", label: "Starred", icon: Star },
   { id: "sent", label: "Sent", icon: Send },
+  { id: "scheduled", label: "Scheduled", icon: Clock },
   { id: "archive", label: "Archive", icon: Archive },
   { id: "spam", label: "Spam", icon: ShieldAlert },
   { id: "trash", label: "Trash", icon: Trash2 },

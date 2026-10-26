@@ -2,6 +2,8 @@ export interface User {
   id: string;
   email: string;
   name: string | null;
+  timezoneMode?: string;
+  timezone?: string | null;
 }
 
 export interface MailAccount {
@@ -50,6 +52,10 @@ export interface MessageListItem {
   isStarred: boolean;
   hasAttachments: boolean;
   hasCalendarInvite?: boolean;
+  isScheduled?: boolean;
+  scheduledId?: string;
+  scheduledAt?: string;
+  timezone?: string;
   account?: {
     label: string;
     emailAddress: string;

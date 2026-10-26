@@ -37,6 +37,8 @@ import {
   ShieldAlert,
   Inbox,
   FolderInput,
+  Clock,
+  Send,
 } from "lucide-react-native";
 import { MoveFolderModal } from "../../src/components/MoveFolderModal";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -354,6 +356,48 @@ export default function MessageDetailScreen() {
     });
   };
 
+  const handleSendNow = async () => {
+    if (!message) return;
+    try {
+      setActionLoading(true);
+      const cleanId = message.id.replace(/^sched_/, "");
+      await api.messages.scheduled.sendNow(cleanId);
+      Alert.alert("Sent", "Scheduled email has been sent successfully.");
+      router.back();
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to send scheduled message now.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteScheduled = async () => {
+    if (!message) return;
+    Alert.alert(
+      "Cancel Scheduled Email",
+      "Are you sure you want to cancel and delete this scheduled email?",
+      [
+        { text: "Keep", style: "cancel" },
+        {
+          text: "Cancel Send",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setActionLoading(true);
+              const cleanId = message.id.replace(/^sched_/, "");
+              await api.messages.scheduled.delete(cleanId);
+              router.back();
+            } catch (err: any) {
+              Alert.alert("Error", err.message || "Failed to cancel scheduled email.");
+            } finally {
+              setActionLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const formatDate = (dateStr: string) => {
     try {
       return format(parseISO(dateStr), "EEEE, MMM d, yyyy 'at' h:mm a");
@@ -595,6 +639,32 @@ export default function MessageDetailScreen() {
       </View>
 
       <ScrollView style={styles.scrollArea}>
+        {/* Scheduled Message Banner */}
+        {message.isScheduled && (
+          <View
+            style={[
+              styles.scheduledBanner,
+              {
+                backgroundColor: colors.primaryLight,
+                borderColor: colors.primary,
+              },
+            ]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1, gap: 10 }}>
+              <Clock size={20} color={colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.primary }}>
+                  Scheduled to send
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textPrimary, marginTop: 2 }}>
+                  {format(parseISO(message.scheduledAt || message.date), "PPP 'at' p")}{" "}
+                  ({message.timezone || "Device Timezone"})
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Email Metadata Header */}
         <View
           style={[styles.metaSection, { borderBottomColor: colors.border }]}
@@ -911,72 +981,141 @@ export default function MessageDetailScreen() {
       </ScrollView>
 
       {/* Bottom Action Bar */}
-      <View
-        style={[
-          styles.bottomActionBar,
-          {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.border,
-          },
-        ]}
-      >
-        <TouchableOpacity
-          onPress={handleReply}
+      {message.isScheduled ? (
+        <View
           style={[
-            styles.bottomActionBtn,
-            { backgroundColor: colors.surfaceHighlight },
+            styles.bottomActionBar,
+            {
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+            },
           ]}
         >
-          <Reply
-            size={18}
-            color={colors.textPrimary}
-            style={{ marginRight: 6 }}
-          />
-          <Text
-            style={[styles.bottomActionText, { color: colors.textPrimary }]}
+          <TouchableOpacity
+            onPress={() => router.push(`/compose?scheduledId=${message.id}`)}
+            style={[
+              styles.bottomActionBtn,
+              { backgroundColor: colors.primary, flex: 1.2 },
+            ]}
           >
-            Reply
-          </Text>
-        </TouchableOpacity>
+            <Clock
+              size={18}
+              color="#FFFFFF"
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[styles.bottomActionText, { color: "#FFFFFF", fontWeight: "700" }]}
+            >
+              Edit Schedule
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={handleReplyAll}
-          style={[
-            styles.bottomActionBtn,
-            { backgroundColor: colors.surfaceHighlight },
-          ]}
-        >
-          <ReplyAll
-            size={18}
-            color={colors.textPrimary}
-            style={{ marginRight: 6 }}
-          />
-          <Text
-            style={[styles.bottomActionText, { color: colors.textPrimary }]}
+          <TouchableOpacity
+            onPress={handleSendNow}
+            style={[
+              styles.bottomActionBtn,
+              { backgroundColor: colors.surfaceHighlight, flex: 1 },
+            ]}
           >
-            Reply All
-          </Text>
-        </TouchableOpacity>
+            <Send
+              size={18}
+              color={colors.textPrimary}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[styles.bottomActionText, { color: colors.textPrimary }]}
+            >
+              Send Now
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={handleForward}
+          <TouchableOpacity
+            onPress={handleDeleteScheduled}
+            style={[
+              styles.bottomActionBtn,
+              { backgroundColor: colors.dangerLight || "#FEE2E2", flex: 0.9 },
+            ]}
+          >
+            <Trash2
+              size={18}
+              color={colors.danger}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[styles.bottomActionText, { color: colors.danger }]}
+            >
+              Cancel
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View
           style={[
-            styles.bottomActionBtn,
-            { backgroundColor: colors.surfaceHighlight },
+            styles.bottomActionBar,
+            {
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+            },
           ]}
         >
-          <Forward
-            size={18}
-            color={colors.textPrimary}
-            style={{ marginRight: 6 }}
-          />
-          <Text
-            style={[styles.bottomActionText, { color: colors.textPrimary }]}
+          <TouchableOpacity
+            onPress={handleReply}
+            style={[
+              styles.bottomActionBtn,
+              { backgroundColor: colors.surfaceHighlight },
+            ]}
           >
-            Forward
-          </Text>
-        </TouchableOpacity>
-      </View>
+            <Reply
+              size={18}
+              color={colors.textPrimary}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[styles.bottomActionText, { color: colors.textPrimary }]}
+            >
+              Reply
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={handleReplyAll}
+            style={[
+              styles.bottomActionBtn,
+              { backgroundColor: colors.surfaceHighlight },
+            ]}
+          >
+            <ReplyAll
+              size={18}
+              color={colors.textPrimary}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[styles.bottomActionText, { color: colors.textPrimary }]}
+            >
+              Reply All
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={handleForward}
+            style={[
+              styles.bottomActionBtn,
+              { backgroundColor: colors.surfaceHighlight },
+            ]}
+          >
+            <Forward
+              size={18}
+              color={colors.textPrimary}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[styles.bottomActionText, { color: colors.textPrimary }]}
+            >
+              Forward
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <MoveFolderModal
         visible={moveModalVisible}
@@ -998,6 +1137,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  scheduledBanner: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
   },
   navButton: {
     padding: Spacing.sm,

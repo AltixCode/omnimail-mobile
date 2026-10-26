@@ -8,6 +8,7 @@ import {
   Switch,
   Alert,
   ActivityIndicator,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
@@ -29,7 +30,10 @@ import {
   Shield,
   X,
   Bug,
+  Globe,
+  Check,
 } from "lucide-react-native";
+import { COMMON_TIMEZONES, getDeviceTimezone } from "../../src/services/timezone";
 import { errorTrackingEnabled, sendTestErrorReport } from "../../src/services/errorTracking";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -73,11 +77,67 @@ export default function SettingsScreen() {
     null,
   );
 
+  // Timezone settings state
+  const [timezoneMode, setTimezoneMode] = useState<"automatic" | "manual">("automatic");
+  const [selectedTimezone, setSelectedTimezone] = useState<string>("UTC");
+  const [deviceTimezone, setDeviceTimezone] = useState<string>(getDeviceTimezone());
+  const [tzModalVisible, setTzModalVisible] = useState(false);
+  const [tzSearch, setTzSearch] = useState("");
+  const [savingTimezone, setSavingTimezone] = useState(false);
+
   useEffect(() => {
     loadAccounts();
     checkPushStatus();
     loadTrustedSenders();
+    loadTimezoneSettings();
   }, []);
+
+  const loadTimezoneSettings = async () => {
+    try {
+      const res = await api.settings.timezone.get();
+      if (res.timezoneMode === "manual" || res.timezoneMode === "automatic") {
+        setTimezoneMode(res.timezoneMode);
+      }
+      if (res.timezone) {
+        setSelectedTimezone(res.timezone);
+      }
+    } catch (err) {
+      console.warn("Failed to load timezone settings:", err);
+    }
+  };
+
+  const handleUpdateMode = async (mode: "automatic" | "manual") => {
+    setTimezoneMode(mode);
+    try {
+      setSavingTimezone(true);
+      await api.settings.timezone.update({
+        timezoneMode: mode,
+        timezone: selectedTimezone,
+      });
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to update timezone mode");
+    } finally {
+      setSavingTimezone(false);
+    }
+  };
+
+  const handleSelectManualTimezone = async (tz: string) => {
+    setSelectedTimezone(tz);
+    setTimezoneMode("manual");
+    setTzModalVisible(false);
+    try {
+      setSavingTimezone(true);
+      await api.settings.timezone.update({
+        timezoneMode: "manual",
+        timezone: tz,
+      });
+      Alert.alert("Timezone Updated", `Timezone set to ${tz}. Synced across all devices.`);
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to update timezone");
+    } finally {
+      setSavingTimezone(false);
+    }
+  };
 
   const loadTrustedSenders = async () => {
     try {
@@ -689,6 +749,104 @@ export default function SettingsScreen() {
           )}
         </View>
 
+        {/* Timezone Settings */}
+        <View
+          style={[
+            styles.sectionCard,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
+        >
+          <View style={styles.sectionHeaderRow}>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Globe
+                size={20}
+                color={colors.primary}
+                style={{ marginRight: 8 }}
+              />
+              <Text
+                style={[
+                  styles.sectionTitle,
+                  { color: colors.textPrimary, marginBottom: 0 },
+                ]}
+              >
+                Timezone Settings
+              </Text>
+            </View>
+            {savingTimezone && (
+              <ActivityIndicator size="small" color={colors.primary} />
+            )}
+          </View>
+          <Text
+            style={[styles.trustedSendersHint, { color: colors.textMuted }]}
+          >
+            Configure your timezone for scheduled sending and calendar events. Synced across all devices and webmail.
+          </Text>
+
+          {/* Automatic Option */}
+          <TouchableOpacity
+            onPress={() => handleUpdateMode("automatic")}
+            style={[
+              styles.tzOptionRow,
+              {
+                borderColor: timezoneMode === "automatic" ? colors.primary : colors.border,
+                backgroundColor: timezoneMode === "automatic" ? (colors.primaryLight || "#EFF6FF") : colors.surface,
+              },
+            ]}
+          >
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={[styles.tzOptionTitle, { color: colors.textPrimary }]}>
+                  Automatic (Device Location)
+                </Text>
+                {timezoneMode === "automatic" && (
+                  <Check size={18} color={colors.primary} />
+                )}
+              </View>
+              <Text style={[styles.tzOptionSubtitle, { color: colors.textSecondary }]}>
+                Current: {deviceTimezone}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Manual Option */}
+          <TouchableOpacity
+            onPress={() => handleUpdateMode("manual")}
+            style={[
+              styles.tzOptionRow,
+              {
+                borderColor: timezoneMode === "manual" ? colors.primary : colors.border,
+                backgroundColor: timezoneMode === "manual" ? (colors.primaryLight || "#EFF6FF") : colors.surface,
+                marginTop: 10,
+              },
+            ]}
+          >
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={[styles.tzOptionTitle, { color: colors.textPrimary }]}>
+                  Manual (Fixed Timezone)
+                </Text>
+                {timezoneMode === "manual" && (
+                  <Check size={18} color={colors.primary} />
+                )}
+              </View>
+              <Text style={[styles.tzOptionSubtitle, { color: colors.textSecondary }]}>
+                Fixed: {selectedTimezone}
+              </Text>
+
+              {timezoneMode === "manual" && (
+                <TouchableOpacity
+                  onPress={() => setTzModalVisible(true)}
+                  style={[styles.changeTzButton, { backgroundColor: colors.surfaceHighlight }]}
+                >
+                  <Text style={[styles.changeTzButtonText, { color: colors.primary }]}>
+                    Change Timezone...
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </TouchableOpacity>
+        </View>
+
         {/* Logout Button */}
         <View style={styles.logoutWrapper}>
           <Button
@@ -709,6 +867,83 @@ export default function SettingsScreen() {
           loadAccounts();
         }}
       />
+
+      {/* Timezone Selection Modal */}
+      <Modal
+        visible={tzModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setTzModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalBackdrop}>
+          <View
+            style={[
+              styles.modalCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
+                Select Timezone
+              </Text>
+              <TouchableOpacity
+                onPress={() => setTzModalVisible(false)}
+                hitSlop={8}
+              >
+                <X size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Input
+              placeholder="Search timezones (e.g. New York, Berlin)..."
+              value={tzSearch}
+              onChangeText={setTzSearch}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <ScrollView style={{ maxHeight: 350, marginTop: 10 }}>
+              {COMMON_TIMEZONES.filter((tz) =>
+                tz.toLowerCase().includes(tzSearch.toLowerCase())
+              ).map((tz) => (
+                <TouchableOpacity
+                  key={tz}
+                  onPress={() => handleSelectManualTimezone(tz)}
+                  style={[
+                    styles.tzItemRow,
+                    {
+                      backgroundColor:
+                        selectedTimezone === tz
+                          ? (colors.primaryLight || "#EFF6FF")
+                          : "transparent",
+                      borderBottomColor: colors.borderSubtle,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.tzItemText,
+                      {
+                        color:
+                          selectedTimezone === tz
+                            ? colors.primary
+                            : colors.textPrimary,
+                        fontWeight:
+                          selectedTimezone === tz ? "700" : "400",
+                      },
+                    ]}
+                  >
+                    {tz}
+                  </Text>
+                  {selectedTimezone === tz && (
+                    <Check size={16} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -904,6 +1139,64 @@ const styles = StyleSheet.create({
   },
   trustedSenderEmail: {
     flex: 1,
+    fontSize: Typography.sizes.sm,
+  },
+  tzOptionRow: {
+    padding: Spacing.md,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  tzOptionTitle: {
+    fontSize: Typography.sizes.sm,
+    fontWeight: Typography.weights.semibold,
+  },
+  tzOptionSubtitle: {
+    fontSize: Typography.sizes.xs,
+    marginTop: 2,
+  },
+  changeTzButton: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  changeTzButtonText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalCard: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    padding: Spacing.lg,
+    maxHeight: "85%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: Spacing.md,
+  },
+  modalTitle: {
+    fontSize: Typography.sizes.base,
+    fontWeight: Typography.weights.bold,
+  },
+  tzItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+  },
+  tzItemText: {
     fontSize: Typography.sizes.sm,
   },
 });
