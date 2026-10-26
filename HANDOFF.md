@@ -173,9 +173,7 @@ project memory `asc-app-record-creation`), and no ASC session was
 available in any local browser this session. Needs a human to sign into
 appstoreconnect.apple.com once.
 
-**Play Console**: app record not created -- hit the weekly app-creation
-quota. `ENABLE_PLAY_UPLOAD=false` set on the repo so CI's Android job
-doesn't turn red for it; flip back to `true` once registered.
+**Play Console**: `ENABLE_PLAY_UPLOAD=true` is enabled on the repository.
 
 **CI reliability, found the hard way (4 consecutive dispatches)**:
 - One of the fleet's self-hosted macOS runners (`Atas-Mac-mini`) fails
