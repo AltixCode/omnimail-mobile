@@ -15,6 +15,7 @@ import {
   CalendarResponse,
   CalendarEvent,
   DeviceRecord,
+  ContactEntry,
 } from "../types";
 
 export class ApiError extends Error {
@@ -268,6 +269,7 @@ export const api = {
       threadId?: string;
       scheduledAt?: string;
       timezone?: string;
+      draftId?: string;
       attachments?: Array<{
         filename: string;
         content: string; // base64
@@ -282,6 +284,44 @@ export const api = {
           body: JSON.stringify(data),
         },
       );
+    },
+
+    draft: {
+      async save(data: {
+        draftId?: string;
+        accountId: string;
+        to: string[] | string;
+        cc?: string[] | string;
+        bcc?: string[] | string;
+        subject: string;
+        bodyText?: string;
+        bodyHtml?: string;
+        inReplyTo?: string;
+        threadId?: string;
+        attachments?: Array<{
+          filename: string;
+          content: string; // base64
+          contentType: string;
+          size?: number;
+        }>;
+      }): Promise<{ success: boolean; draft: any }> {
+        return await request<{ success: boolean; draft: any }>(
+          "/api/messages/draft",
+          {
+            method: "POST",
+            body: JSON.stringify(data),
+          },
+        );
+      },
+
+      async delete(id: string): Promise<{ success: boolean }> {
+        return await request<{ success: boolean }>(
+          `/api/messages/draft?id=${encodeURIComponent(id)}`,
+          {
+            method: "DELETE",
+          },
+        );
+      },
     },
 
     scheduled: {
@@ -564,6 +604,17 @@ export const api = {
           body: JSON.stringify(data),
         });
       },
+    },
+  },
+
+  contacts: {
+    async list(query?: string, limit?: number): Promise<{ contacts: ContactEntry[]; total?: number }> {
+      const q = query ? `query=${encodeURIComponent(query)}` : "";
+      const l = limit ? `limit=${limit}` : "";
+      const params = [q, l].filter(Boolean).join("&");
+      return await request<{ contacts: ContactEntry[]; total?: number }>(
+        `/api/contacts${params ? `?${params}` : ""}`
+      );
     },
   },
 };

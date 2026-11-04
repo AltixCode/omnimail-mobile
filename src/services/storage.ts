@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
-import { User } from "../types";
+import { User, ContactEntry } from "../types";
 
 export const DEFAULT_SERVER_URL = "https://webmail.altixcode.com";
 
@@ -9,6 +9,7 @@ const KEYS = {
   AUTH_TOKEN: "omnimail_auth_token",
   USER: "omnimail_user_profile",
   DEVICE_TOKEN: "omnimail_device_token",
+  CONTACTS: "omnimail_contacts_list",
 };
 
 // Web localStorage shim for browser / web preview testing
@@ -149,5 +150,71 @@ export async function clearAllAuthData(): Promise<void> {
     await deleteItem(KEYS.USER);
   } catch (error) {
     console.error("Error clearing auth data:", error);
+  }
+}
+
+export async function getStoredContacts(): Promise<ContactEntry[]> {
+  try {
+    const raw = await getItem(KEYS.CONTACTS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn("Error reading stored contacts:", error);
+    return [];
+  }
+}
+
+export async function saveStoredContacts(contacts: ContactEntry[]): Promise<void> {
+  try {
+    await setItem(KEYS.CONTACTS, JSON.stringify(contacts.slice(0, 200)));
+  } catch (error) {
+    console.error("Error saving stored contacts:", error);
+  }
+}
+
+export async function addStoredContacts(
+  newRecipients: Array<{ address: string; name?: string | null } | string>
+): Promise<void> {
+  try {
+    const existing = await getStoredContacts();
+    const map = new Map<string, ContactEntry>();
+    for (const c of existing) {
+      map.set(c.address.toLowerCase(), c);
+    }
+
+    const nowStr = new Date().toISOString();
+    for (const item of newRecipients) {
+      const address = typeof item === "string" ? item.trim() : item.address.trim();
+      const name = typeof item === "string" ? null : item.name?.trim() || null;
+      if (!address || !address.includes("@")) continue;
+
+      const cleanAddr = address.replace(/^<|>$/g, "").toLowerCase();
+      const current = map.get(cleanAddr);
+      if (current) {
+        current.count = (current.count || 1) + 2;
+        current.lastContactedAt = nowStr;
+        if (!current.name && name) current.name = name;
+      } else {
+        const entry: ContactEntry = {
+          address: cleanAddr,
+          name: name || null,
+          lastContactedAt: nowStr,
+          count: 2,
+        };
+        map.set(cleanAddr, entry);
+      }
+    }
+
+    const updated = Array.from(map.values()).sort((a, b) => {
+      if ((b.count || 0) !== (a.count || 0)) return (b.count || 0) - (a.count || 0);
+      const dateA = a.lastContactedAt ? new Date(a.lastContactedAt).getTime() : 0;
+      const dateB = b.lastContactedAt ? new Date(b.lastContactedAt).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    await saveStoredContacts(updated);
+  } catch (error) {
+    console.error("Error updating stored contacts:", error);
   }
 }

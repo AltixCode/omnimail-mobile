@@ -146,3 +146,10 @@ export interface CalendarResponse {
   calendars: Calendar[];
   events: CalendarEvent[];
 }
+
+export interface ContactEntry {
+  address: string;
+  name?: string | null;
+  lastContactedAt?: string | null;
+  count?: number;
+}

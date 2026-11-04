@@ -83,6 +83,12 @@ export default function MessageDetailScreen() {
       .match(/<([^>]+)>/)?.[1]
       ?.trim() || (message?.fromAddress || "").trim().toLowerCase();
 
+  const isDraft = Boolean(
+    message?.folder?.specialUse === "\\Drafts" ||
+    message?.folder?.name?.toLowerCase().includes("draft") ||
+    (message?.flags && message.flags.includes("\\Draft"))
+  );
+
   const isSenderTrusted = (() => {
     if (!cleanSenderEmail || trustedSenders.size === 0) return false;
     if (trustedSenders.has(cleanSenderEmail)) return true;
@@ -639,6 +645,31 @@ export default function MessageDetailScreen() {
       </View>
 
       <ScrollView style={styles.scrollArea}>
+        {/* Draft Message Banner */}
+        {isDraft && (
+          <View
+            style={[
+              styles.scheduledBanner,
+              {
+                backgroundColor: isDark ? "#1E293B" : "#F1F5F9",
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1, gap: 10 }}>
+              <FileText size={20} color={colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.primary }}>
+                  Draft
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                  This message is a saved draft. You can continue editing or send it.
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Scheduled Message Banner */}
         {message.isScheduled && (
           <View
@@ -981,7 +1012,75 @@ export default function MessageDetailScreen() {
       </ScrollView>
 
       {/* Bottom Action Bar */}
-      {message.isScheduled ? (
+      {isDraft ? (
+        <View
+          style={[
+            styles.bottomActionBar,
+            {
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            onPress={() => router.push(`/compose?draftId=${message.id}`)}
+            style={[
+              styles.bottomActionBtn,
+              { backgroundColor: colors.primary, flex: 1.2 },
+            ]}
+          >
+            <FileText
+              size={18}
+              color="#FFFFFF"
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[styles.bottomActionText, { color: "#FFFFFF", fontWeight: "700" }]}
+            >
+              Edit Draft
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={async () => {
+              Alert.alert(
+                "Discard Draft",
+                "Are you sure you want to discard this draft?",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Discard",
+                    style: "destructive",
+                    onPress: async () => {
+                      try {
+                        await api.messages.draft.delete(message.id);
+                        router.back();
+                      } catch (err: any) {
+                        Alert.alert("Error", err.message || "Failed to discard draft");
+                      }
+                    },
+                  },
+                ],
+              );
+            }}
+            style={[
+              styles.bottomActionBtn,
+              { backgroundColor: colors.dangerLight || "#FEE2E2", flex: 0.9 },
+            ]}
+          >
+            <Trash2
+              size={18}
+              color={colors.danger}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[styles.bottomActionText, { color: colors.danger }]}
+            >
+              Discard
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : message.isScheduled ? (
         <View
           style={[
             styles.bottomActionBar,

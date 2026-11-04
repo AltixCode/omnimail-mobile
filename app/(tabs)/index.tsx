@@ -35,10 +35,12 @@ import {
   ShieldAlert,
   FolderInput,
   Clock,
+  FileText,
 } from "lucide-react-native";
 import { useAuth } from "../../src/context/AuthContext";
 import { useTheme } from "../../src/context/ThemeContext";
 import { api } from "../../src/services/api";
+import { addStoredContacts } from "../../src/services/storage";
 import { MessageListItem, MailAccount, Folder } from "../../src/types";
 import { SwipeableMessageRow } from "../../src/components/SwipeableMessageRow";
 import { EmptyState } from "../../src/components/EmptyState";
@@ -50,6 +52,7 @@ const FOLDERS = [
   { id: "inbox", label: "Inbox", icon: Inbox },
   { id: "starred", label: "Starred", icon: Star },
   { id: "sent", label: "Sent", icon: Send },
+  { id: "drafts", label: "Drafts", icon: FileText },
   { id: "scheduled", label: "Scheduled", icon: Clock },
   { id: "archive", label: "Archive", icon: Archive },
   { id: "spam", label: "Spam", icon: ShieldAlert },
@@ -144,6 +147,33 @@ export default function InboxScreen() {
           setMessages(res.messages);
         } else {
           setMessages((prev) => [...prev, ...res.messages]);
+        }
+
+        if (res.messages && res.messages.length > 0) {
+          const extracted: Array<{ address: string; name?: string | null }> = [];
+          for (const msg of res.messages) {
+            if (msg.fromAddress) {
+              extracted.push({ address: msg.fromAddress, name: msg.fromName });
+            }
+            if (msg.toAddresses) {
+              try {
+                const parsed = JSON.parse(msg.toAddresses);
+                if (Array.isArray(parsed)) {
+                  for (const p of parsed) {
+                    if (typeof p === "string") extracted.push({ address: p });
+                    else if (p && p.address) extracted.push({ address: p.address, name: p.name });
+                  }
+                }
+              } catch {
+                for (const part of msg.toAddresses.split(/[,;]/)) {
+                  extracted.push({ address: part.trim() });
+                }
+              }
+            }
+          }
+          if (extracted.length > 0) {
+            addStoredContacts(extracted).catch(() => {});
+          }
         }
 
         setHasMore(pageToFetch < res.pagination.totalPages);
@@ -540,7 +570,13 @@ export default function InboxScreen() {
               message={item}
               selectMode={selectMode}
               selected={selectedIds.has(item.id)}
-              onPress={() => router.push(`/message/${item.id}`)}
+              onPress={() => {
+                if (selectedView === "drafts" || item.folder?.specialUse === "\\Drafts") {
+                  router.push(`/compose?draftId=${item.id}`);
+                } else {
+                  router.push(`/message/${item.id}`);
+                }
+              }}
               onLongPress={() => handleRowLongPress(item)}
               onToggleStar={() => handleToggleStar(item)}
               onToggleSelect={() => toggleSelected(item.id)}

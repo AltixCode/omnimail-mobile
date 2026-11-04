@@ -34,10 +34,16 @@ import {
   Calendar,
   Search,
   AlertCircle,
+  Save,
 } from "lucide-react-native";
 import { useTheme } from "../src/context/ThemeContext";
 import { api } from "../src/services/api";
-import { MailAccount } from "../src/types";
+import { MailAccount, ContactEntry } from "../src/types";
+import {
+  getStoredContacts,
+  saveStoredContacts,
+  addStoredContacts,
+} from "../src/services/storage";
 import { Spacing, Typography } from "../src/constants/theme";
 import {
   COMMON_TIMEZONES,
@@ -104,6 +110,7 @@ export default function ComposeScreen() {
     references?: string;
     threadId?: string;
     scheduledId?: string;
+    draftId?: string;
   }>();
 
   const isScheduledEdit = Boolean(params.scheduledId);
@@ -118,8 +125,177 @@ export default function ComposeScreen() {
     params.accountId || "",
   );
   const [showCc, setShowCc] = useState<boolean>(Boolean(params.cc));
-  const [to, setTo] = useState<string>(params.to || "");
-  const [cc, setCc] = useState<string>(params.cc || "");
+
+  const initialToChips = useMemo(() => {
+    if (!params.to) return [];
+    return params.to
+      .split(/[,;]/)
+      .map((s) => s.trim().replace(/^<|>$/g, ""))
+      .filter(Boolean);
+  }, [params.to]);
+
+  const initialCcChips = useMemo(() => {
+    if (!params.cc) return [];
+    return params.cc
+      .split(/[,;]/)
+      .map((s) => s.trim().replace(/^<|>$/g, ""))
+      .filter(Boolean);
+  }, [params.cc]);
+
+  const [toChips, setToChips] = useState<string[]>(initialToChips);
+  const [toInput, setToInput] = useState<string>("");
+  const [ccChips, setCcChips] = useState<string[]>(initialCcChips);
+  const [ccInput, setCcInput] = useState<string>("");
+
+  // Draft state
+  const [draftId, setDraftId] = useState<string | null>(params.draftId || null);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [lastSavedTime, setLastSavedTime] = useState<Date | null>(null);
+  const draftSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Contacts memory and auto-complete state
+  const [contacts, setContacts] = useState<ContactEntry[]>([]);
+  const [activeRecipientField, setActiveRecipientField] = useState<"to" | "cc" | null>(null);
+
+  // Load contacts from memory and fetch fresh from server
+  useEffect(() => {
+    getStoredContacts()
+      .then((stored) => {
+        if (stored && stored.length > 0) {
+          setContacts(stored);
+        }
+      })
+      .catch(() => {});
+
+    api.contacts
+      .list(undefined, 100)
+      .then((res) => {
+        if (res.contacts && Array.isArray(res.contacts)) {
+          setContacts(res.contacts);
+          saveStoredContacts(res.contacts).catch(() => {});
+        }
+      })
+      .catch((err) => {
+        console.warn("Could not fetch remote contacts:", err);
+      });
+  }, []);
+
+  const getCleanRecipients = (chips: string[], currentInput: string): string[] => {
+    const list = [...chips];
+    if (currentInput.trim()) {
+      const parts = currentInput.split(/[,;]/);
+      for (const part of parts) {
+        const clean = part.trim().replace(/^<|>$/g, "").replace(/[,;]/g, "");
+        if (clean && !list.includes(clean)) {
+          list.push(clean);
+        }
+      }
+    }
+    return list;
+  };
+
+  const getSuggestions = (field: "to" | "cc") => {
+    const inputVal = field === "to" ? toInput : ccInput;
+    const chips = field === "to" ? toChips : ccChips;
+    const query = inputVal.trim().toLowerCase();
+
+    return contacts
+      .filter((c) => !chips.includes(c.address))
+      .filter((c) => {
+        if (!query) return true;
+        return (
+          c.address.toLowerCase().includes(query) ||
+          (c.name && c.name.toLowerCase().includes(query))
+        );
+      })
+      .slice(0, 5);
+  };
+
+  const handleRecipientTextChange = (field: "to" | "cc", text: string) => {
+    if (text.includes(",") || text.includes(";")) {
+      const parts = text.split(/[,;]/);
+      const endsWithDelim = text.endsWith(",") || text.endsWith(";");
+      const completedParts = endsWithDelim ? parts : parts.slice(0, -1);
+      const remainder = endsWithDelim ? "" : (parts[parts.length - 1] || "");
+
+      const toAdd: string[] = [];
+      for (const part of completedParts) {
+        const clean = part.trim().replace(/^<|>$/g, "").replace(/[,;]/g, "");
+        if (clean && !toAdd.includes(clean)) {
+          toAdd.push(clean);
+        }
+      }
+
+      if (field === "to") {
+        if (toAdd.length > 0) {
+          setToChips((prev) => {
+            const next = [...prev];
+            for (const c of toAdd) {
+              if (!next.includes(c)) next.push(c);
+            }
+            return next;
+          });
+        }
+        setToInput(remainder);
+        setActiveRecipientField(null);
+      } else {
+        if (toAdd.length > 0) {
+          setCcChips((prev) => {
+            const next = [...prev];
+            for (const c of toAdd) {
+              if (!next.includes(c)) next.push(c);
+            }
+            return next;
+          });
+        }
+        setCcInput(remainder);
+        setActiveRecipientField(null);
+      }
+    } else {
+      if (field === "to") {
+        setToInput(text);
+        setActiveRecipientField("to");
+      } else {
+        setCcInput(text);
+        setActiveRecipientField("cc");
+      }
+    }
+  };
+
+  const handleSelectSuggestion = (field: "to" | "cc", contact: ContactEntry) => {
+    if (field === "to") {
+      if (!toChips.includes(contact.address)) {
+        setToChips((prev) => [...prev, contact.address]);
+      }
+      setToInput("");
+      setActiveRecipientField(null);
+    } else {
+      if (!ccChips.includes(contact.address)) {
+        setCcChips((prev) => [...prev, contact.address]);
+      }
+      setCcInput("");
+      setActiveRecipientField(null);
+    }
+  };
+
+  const commitCurrentInput = (field: "to" | "cc") => {
+    const inputVal = field === "to" ? toInput : ccInput;
+    const clean = inputVal.trim().replace(/^<|>$/g, "").replace(/[,;]/g, "");
+    if (clean) {
+      if (field === "to") {
+        if (!toChips.includes(clean)) {
+          setToChips((prev) => [...prev, clean]);
+        }
+        setToInput("");
+      } else {
+        if (!ccChips.includes(clean)) {
+          setCcChips((prev) => [...prev, clean]);
+        }
+        setCcInput("");
+      }
+    }
+  };
+
   const [subject, setSubject] = useState<string>(params.subject || "");
 
   // Timezone and scheduling state
@@ -235,6 +411,13 @@ export default function ComposeScreen() {
     }
   }, [params.scheduledId]);
 
+  // If opening an existing draft, fetch full details
+  useEffect(() => {
+    if (params.draftId) {
+      loadDraftEmail(params.draftId);
+    }
+  }, [params.draftId]);
+
   const loadAccounts = async () => {
     try {
       const res = await api.accounts.list();
@@ -274,26 +457,29 @@ export default function ComposeScreen() {
       if (msg) {
         if (msg.accountId) setSelectedAccountId(msg.accountId);
 
-        let toStr = "";
+        let toArr: string[] = [];
         try {
           const parsed = JSON.parse(msg.toAddresses || "[]");
-          toStr = Array.isArray(parsed) ? parsed.join(", ") : String(parsed);
+          toArr = Array.isArray(parsed) ? parsed : [String(parsed)];
         } catch {
-          toStr = msg.toAddresses || "";
+          toArr = (msg.toAddresses || "").split(/[,;]/);
         }
-        setTo(toStr);
+        setToChips(toArr.map((s) => s.trim().replace(/^<|>$/g, "")).filter(Boolean));
+        setToInput("");
 
-        let ccStr = "";
+        let ccArr: string[] = [];
         if (msg.ccAddresses) {
           try {
             const parsed = JSON.parse(msg.ccAddresses);
-            ccStr = Array.isArray(parsed) ? parsed.join(", ") : String(parsed);
+            ccArr = Array.isArray(parsed) ? parsed : [String(parsed)];
           } catch {
-            ccStr = msg.ccAddresses;
+            ccArr = msg.ccAddresses.split(/[,;]/);
           }
         }
-        setCc(ccStr);
-        if (ccStr) setShowCc(true);
+        const cleanedCc = ccArr.map((s) => s.trim().replace(/^<|>$/g, "")).filter(Boolean);
+        setCcChips(cleanedCc);
+        setCcInput("");
+        if (cleanedCc.length > 0) setShowCc(true);
 
         setSubject(msg.subject || "");
 
@@ -340,6 +526,69 @@ export default function ComposeScreen() {
       Alert.alert("Error", err.message || "Failed to load scheduled email.");
     } finally {
       setLoadingScheduled(false);
+    }
+  };
+
+  const loadDraftEmail = async (id: string) => {
+    try {
+      const res = await api.messages.get(id);
+      const msg = res.message;
+      if (msg) {
+        if (msg.accountId) setSelectedAccountId(msg.accountId);
+
+        let toArr: string[] = [];
+        try {
+          const parsed = JSON.parse(msg.toAddresses || "[]");
+          toArr = Array.isArray(parsed) ? parsed : [String(parsed)];
+        } catch {
+          toArr = (msg.toAddresses || "").split(/[,;]/);
+        }
+        setToChips(toArr.map((s) => s.trim().replace(/^<|>$/g, "")).filter(Boolean));
+        setToInput("");
+
+        let ccArr: string[] = [];
+        if (msg.ccAddresses) {
+          try {
+            const parsed = JSON.parse(msg.ccAddresses);
+            ccArr = Array.isArray(parsed) ? parsed : [String(parsed)];
+          } catch {
+            ccArr = msg.ccAddresses.split(/[,;]/);
+          }
+        }
+        const cleanedCc = ccArr.map((s) => s.trim().replace(/^<|>$/g, "")).filter(Boolean);
+        setCcChips(cleanedCc);
+        setCcInput("");
+        if (cleanedCc.length > 0) setShowCc(true);
+
+        setSubject(msg.subject || "");
+
+        const bodyHtmlContent =
+          msg.bodyHtml || (msg.bodyText ? plainTextToHtml(msg.bodyText) : "");
+        setEditorHtml(bodyHtmlContent);
+        initialEditorHtmlRef.current = bodyHtmlContent;
+
+        webviewRef.current?.injectJavaScript(`
+          if (document.getElementById('editor')) {
+            document.getElementById('editor').innerHTML = ${JSON.stringify(bodyHtmlContent)};
+          }
+          true;
+        `);
+
+        if (msg.attachments && Array.isArray(msg.attachments)) {
+          setAttachments(
+            msg.attachments.map((att: any) => ({
+              name: att.filename,
+              size: att.size || 0,
+              mimeType: att.contentType || "application/octet-stream",
+              dataBase64: att.dataBase64,
+            })),
+          );
+        }
+        setDraftId(id);
+        setDraftStatus("saved");
+      }
+    } catch (err: any) {
+      console.error("Failed to load draft email:", err);
     }
   };
 
@@ -449,7 +698,8 @@ export default function ComposeScreen() {
       Alert.alert("Missing Account", "Please select an account to send from.");
       return false;
     }
-    if (!to.trim()) {
+    const finalTo = getCleanRecipients(toChips, toInput);
+    if (finalTo.length === 0) {
       Alert.alert(
         "Missing Recipient",
         "Please enter at least one recipient email address in 'To'.",
@@ -463,25 +713,147 @@ export default function ComposeScreen() {
     return true;
   };
 
+  const handleSaveDraft = async (isAutoSave: boolean = false) => {
+    if (isScheduledEdit) return;
+
+    const accId = selectedAccountId || accounts[0]?.id;
+    if (!accId) return;
+
+    const finalTo = getCleanRecipients(toChips, toInput);
+    const finalCc = getCleanRecipients(ccChips, ccInput);
+    const plain = htmlToPlainText(editorHtml);
+    const hasAnyContent =
+      finalTo.length > 0 ||
+      finalCc.length > 0 ||
+      subject.trim().length > 0 ||
+      plain.length > 0 ||
+      attachments.length > 0;
+
+    if (!hasAnyContent) {
+      if (!isAutoSave) {
+        Alert.alert("Empty Draft", "Cannot save an empty email as a draft.");
+      }
+      return;
+    }
+
+    try {
+      setDraftStatus("saving");
+      const encodedAttachments = await getEncodedAttachments();
+      const res = await api.messages.draft.save({
+        draftId: draftId || undefined,
+        accountId: accId,
+        to: finalTo,
+        cc: finalCc.length > 0 ? finalCc : undefined,
+        subject: subject.trim(),
+        bodyText: plain,
+        bodyHtml: editorHtml,
+        inReplyTo: params.inReplyTo,
+        threadId: params.threadId,
+        attachments: encodedAttachments,
+      });
+
+      if (res.draft?.id) {
+        setDraftId(res.draft.id);
+      }
+      setDraftStatus("saved");
+      setLastSavedTime(new Date());
+
+      if (!isAutoSave) {
+        if (Platform.OS === "web") {
+          window.alert("Draft saved successfully.");
+        } else {
+          Alert.alert("Draft Saved", "Your draft has been saved successfully.");
+        }
+      }
+    } catch (err: any) {
+      console.warn("Save draft error:", err);
+      setDraftStatus("error");
+      if (!isAutoSave) {
+        Alert.alert("Draft Error", err.message || "Failed to save draft.");
+      }
+    }
+  };
+
+  const handleDiscardDraft = () => {
+    if (draftId) {
+      Alert.alert(
+        "Discard Draft",
+        "Are you sure you want to discard this draft? It will be deleted permanently.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Discard",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                await api.messages.draft.delete(draftId);
+              } catch (err: any) {
+                console.warn("Failed to delete draft:", err);
+              }
+              router.back();
+            },
+          },
+        ],
+      );
+    } else {
+      router.back();
+    }
+  };
+
+  useEffect(() => {
+    if (isScheduledEdit) return;
+
+    const finalTo = getCleanRecipients(toChips, toInput);
+    const finalCc = getCleanRecipients(ccChips, ccInput);
+    const plain = htmlToPlainText(editorHtml);
+    const hasAnyContent =
+      finalTo.length > 0 ||
+      finalCc.length > 0 ||
+      subject.trim().length > 0 ||
+      plain.length > 0 ||
+      attachments.length > 0;
+
+    if (!hasAnyContent) return;
+
+    if (draftSaveTimeoutRef.current) {
+      clearTimeout(draftSaveTimeoutRef.current);
+    }
+
+    draftSaveTimeoutRef.current = setTimeout(() => {
+      handleSaveDraft(true);
+    }, 2500);
+
+    return () => {
+      if (draftSaveTimeoutRef.current) {
+        clearTimeout(draftSaveTimeoutRef.current);
+      }
+    };
+  }, [toChips, toInput, ccChips, ccInput, subject, editorHtml, attachments, isScheduledEdit, selectedAccountId]);
+
   const handleSend = async () => {
     if (!validateEmailFields()) return;
 
     try {
       setSending(true);
       const encodedAttachments = await getEncodedAttachments();
+      const finalTo = getCleanRecipients(toChips, toInput);
+      const finalCc = getCleanRecipients(ccChips, ccInput);
 
       await api.messages.send({
         accountId: selectedAccountId,
-        to: to.trim(),
-        cc: cc.trim() || undefined,
+        to: finalTo,
+        cc: finalCc.length > 0 ? finalCc : undefined,
         subject: subject.trim(),
         bodyText: htmlToPlainText(editorHtml),
         bodyHtml: editorHtml,
         inReplyTo: params.inReplyTo,
         references: params.references,
         threadId: params.threadId,
+        draftId: draftId || undefined,
         attachments: encodedAttachments,
       });
+
+      addStoredContacts([...finalTo, ...finalCc]).catch(() => {});
 
       if (Platform.OS === "web") {
         window.alert("Your email has been sent successfully.");
@@ -558,6 +930,8 @@ export default function ComposeScreen() {
       setSending(true);
       const encodedAttachments = await getEncodedAttachments();
       const scheduledAtISO = finalTargetDate.toISOString();
+      const finalTo = getCleanRecipients(toChips, toInput);
+      const finalCc = getCleanRecipients(ccChips, ccInput);
 
       const formattedTime = new Intl.DateTimeFormat("en-US", {
         timeZone: scheduleTimezone,
@@ -571,15 +945,18 @@ export default function ComposeScreen() {
       if (isScheduledEdit && cleanScheduledId) {
         await api.messages.scheduled.update(cleanScheduledId, {
           accountId: selectedAccountId,
-          to: to.trim(),
-          cc: cc.trim() || undefined,
+          to: finalTo,
+          cc: finalCc.length > 0 ? finalCc : undefined,
           subject: subject.trim(),
           bodyText: htmlToPlainText(editorHtml),
           bodyHtml: editorHtml,
           scheduledAt: scheduledAtISO,
           timezone: scheduleTimezone,
+          draftId: draftId || undefined,
           attachments: encodedAttachments,
         });
+
+        addStoredContacts([...finalTo, ...finalCc]).catch(() => {});
 
         setScheduleModalVisible(false);
         Alert.alert(
@@ -590,8 +967,8 @@ export default function ComposeScreen() {
       } else {
         await api.messages.send({
           accountId: selectedAccountId,
-          to: to.trim(),
-          cc: cc.trim() || undefined,
+          to: finalTo,
+          cc: finalCc.length > 0 ? finalCc : undefined,
           subject: subject.trim(),
           bodyText: htmlToPlainText(editorHtml),
           bodyHtml: editorHtml,
@@ -600,8 +977,11 @@ export default function ComposeScreen() {
           threadId: params.threadId,
           scheduledAt: scheduledAtISO,
           timezone: scheduleTimezone,
+          draftId: draftId || undefined,
           attachments: encodedAttachments,
         });
+
+        addStoredContacts([...finalTo, ...finalCc]).catch(() => {});
 
         setScheduleModalVisible(false);
         Alert.alert(
@@ -657,16 +1037,19 @@ export default function ComposeScreen() {
           try {
             setSending(true);
             const encodedAttachments = await getEncodedAttachments();
+            const finalTo = getCleanRecipients(toChips, toInput);
+            const finalCc = getCleanRecipients(ccChips, ccInput);
             await api.messages.scheduled.update(cleanScheduledId, {
               accountId: selectedAccountId,
-              to: to.trim(),
-              cc: cc.trim() || undefined,
+              to: finalTo,
+              cc: finalCc.length > 0 ? finalCc : undefined,
               subject: subject.trim(),
               bodyText: htmlToPlainText(editorHtml),
               bodyHtml: editorHtml,
               attachments: encodedAttachments,
             });
             await api.messages.scheduled.sendNow(cleanScheduledId);
+            addStoredContacts([...finalTo, ...finalCc]).catch(() => {});
             Alert.alert("Sent", "Your email has been sent successfully.", [
               { text: "OK", onPress: () => router.back() },
             ]);
@@ -746,7 +1129,7 @@ export default function ComposeScreen() {
       {/* Top Header */}
       <View style={[styles.topHeader, { borderBottomColor: colors.border }]}>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={draftId ? handleDiscardDraft : () => router.back()}
           style={styles.closeButton}
           disabled={sending}
         >
@@ -754,7 +1137,7 @@ export default function ComposeScreen() {
         </TouchableOpacity>
 
         <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
-          {isScheduledEdit ? "Edit Scheduled" : "New Message"}
+          {isScheduledEdit ? "Edit Scheduled" : draftId ? "Edit Draft" : "New Message"}
         </Text>
 
         <View style={styles.headerRightActions}>
@@ -812,6 +1195,23 @@ export default function ComposeScreen() {
             </>
           ) : (
             <>
+              {/* Save Draft Icon Button */}
+              <TouchableOpacity
+                onPress={() => handleSaveDraft(false)}
+                disabled={sending || draftStatus === "saving"}
+                style={[
+                  styles.attachButton,
+                  { backgroundColor: colors.surfaceHighlight },
+                ]}
+                accessibilityLabel="Save Draft"
+              >
+                {draftStatus === "saving" ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Save size={18} color={colors.textPrimary} />
+                )}
+              </TouchableOpacity>
+
               {/* Schedule Send Modal Opener */}
               <TouchableOpacity
                 onPress={() => setScheduleModalVisible(true)}
@@ -849,6 +1249,39 @@ export default function ComposeScreen() {
           )}
         </View>
       </View>
+
+      {/* Draft status indicator banner */}
+      {!isScheduledEdit && (draftStatus === "saving" || draftStatus === "saved" || draftStatus === "error") && (
+        <View
+          style={[
+            styles.draftStatusBar,
+            {
+              backgroundColor: isDark ? "#1E293B" : "#F1F5F9",
+              borderBottomColor: colors.border,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.draftStatusText,
+              { color: draftStatus === "error" ? "#EF4444" : colors.textSecondary },
+            ]}
+          >
+            {draftStatus === "saving"
+              ? "Saving draft..."
+              : draftStatus === "saved" && lastSavedTime
+              ? `Draft saved at ${lastSavedTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+              : draftStatus === "saved"
+              ? "Draft saved"
+              : "Failed to auto-save draft"}
+          </Text>
+          {draftId && (
+            <TouchableOpacity onPress={handleDiscardDraft}>
+              <Text style={styles.discardDraftText}>Discard</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* Scheduled Info Banner (if editing scheduled email) */}
       {isScheduledEdit && (
@@ -962,27 +1395,66 @@ export default function ComposeScreen() {
 
             {/* To Field */}
             <View
-              style={[styles.fieldRow, { borderBottomColor: colors.border }]}
+              style={[
+                styles.fieldRow,
+                { borderBottomColor: colors.border, alignItems: "flex-start" },
+              ]}
             >
               <Text
-                style={[styles.fieldLabel, { color: colors.textSecondary }]}
+                style={[styles.fieldLabel, { color: colors.textSecondary, paddingTop: 6 }]}
               >
                 To:
               </Text>
-              <TextInput
-                style={[styles.fieldInput, { color: colors.textPrimary }]}
-                placeholder="recipient@example.com"
-                placeholderTextColor={colors.textMuted}
-                value={to}
-                onChangeText={setTo}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
+              <View style={styles.chipsContainer}>
+                {toChips.map((chip, idx) => (
+                  <View
+                    key={idx}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor: colors.surfaceHighlight,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[styles.chipText, { color: colors.textPrimary }]}
+                      numberOfLines={1}
+                    >
+                      {chip}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setToChips((prev) => prev.filter((_, i) => i !== idx))}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      style={styles.chipRemove}
+                    >
+                      <X size={12} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                <TextInput
+                  style={[styles.chipInput, { color: colors.textPrimary }]}
+                  placeholder={toChips.length === 0 ? "recipient@example.com" : "Add recipient..."}
+                  placeholderTextColor={colors.textMuted}
+                  value={toInput}
+                  onChangeText={(text) => handleRecipientTextChange("to", text)}
+                  onFocus={() => setActiveRecipientField("to")}
+                  onSubmitEditing={() => commitCurrentInput("to")}
+                  onKeyPress={({ nativeEvent }) => {
+                    if (nativeEvent.key === "Backspace" && toInput === "" && toChips.length > 0) {
+                      setToChips((prev) => prev.slice(0, -1));
+                    }
+                  }}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                />
+              </View>
               {!showCc && (
                 <TouchableOpacity
                   onPress={() => setShowCc(true)}
-                  style={styles.ccToggle}
+                  style={[styles.ccToggle, { paddingTop: 6 }]}
                 >
                   <Text style={[styles.ccToggleText, { color: colors.primary }]}>
                     Cc
@@ -991,27 +1463,142 @@ export default function ComposeScreen() {
               )}
             </View>
 
+            {/* Suggestions for To */}
+            {activeRecipientField === "to" && getSuggestions("to").length > 0 && (
+              <View
+                style={[
+                  styles.suggestionsBox,
+                  {
+                    backgroundColor: colors.surface,
+                    borderBottomColor: colors.border,
+                  },
+                ]}
+              >
+                {getSuggestions("to").map((contact) => (
+                  <TouchableOpacity
+                    key={contact.address}
+                    style={[styles.suggestionItem, { borderBottomColor: colors.border }]}
+                    onPress={() => handleSelectSuggestion("to", contact)}
+                  >
+                    <View style={[styles.suggestionAvatar, { backgroundColor: colors.primary }]}>
+                      <Text style={styles.suggestionAvatarText}>
+                        {(contact.name || contact.address).slice(0, 2).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.suggestionDetails}>
+                      {contact.name ? (
+                        <Text style={[styles.suggestionName, { color: colors.textPrimary }]} numberOfLines={1}>
+                          {contact.name}
+                        </Text>
+                      ) : null}
+                      <Text style={[styles.suggestionEmail, { color: colors.textSecondary }]} numberOfLines={1}>
+                        {contact.address}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
             {/* Cc Field (Optional) */}
             {showCc && (
-              <View
-                style={[styles.fieldRow, { borderBottomColor: colors.border }]}
-              >
-                <Text
-                  style={[styles.fieldLabel, { color: colors.textSecondary }]}
+              <>
+                <View
+                  style={[
+                    styles.fieldRow,
+                    { borderBottomColor: colors.border, alignItems: "flex-start" },
+                  ]}
                 >
-                  Cc:
-                </Text>
-                <TextInput
-                  style={[styles.fieldInput, { color: colors.textPrimary }]}
-                  placeholder="colleague@example.com"
-                  placeholderTextColor={colors.textMuted}
-                  value={cc}
-                  onChangeText={setCc}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
+                  <Text
+                    style={[styles.fieldLabel, { color: colors.textSecondary, paddingTop: 6 }]}
+                  >
+                    Cc:
+                  </Text>
+                  <View style={styles.chipsContainer}>
+                    {ccChips.map((chip, idx) => (
+                      <View
+                        key={idx}
+                        style={[
+                          styles.chip,
+                          {
+                            backgroundColor: colors.surfaceHighlight,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[styles.chipText, { color: colors.textPrimary }]}
+                          numberOfLines={1}
+                        >
+                          {chip}
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => setCcChips((prev) => prev.filter((_, i) => i !== idx))}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                          style={styles.chipRemove}
+                        >
+                          <X size={12} color={colors.textSecondary} />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    <TextInput
+                      style={[styles.chipInput, { color: colors.textPrimary }]}
+                      placeholder="colleague@example.com"
+                      placeholderTextColor={colors.textMuted}
+                      value={ccInput}
+                      onChangeText={(text) => handleRecipientTextChange("cc", text)}
+                      onFocus={() => setActiveRecipientField("cc")}
+                      onSubmitEditing={() => commitCurrentInput("cc")}
+                      onKeyPress={({ nativeEvent }) => {
+                        if (nativeEvent.key === "Backspace" && ccInput === "" && ccChips.length > 0) {
+                          setCcChips((prev) => prev.slice(0, -1));
+                        }
+                      }}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      returnKeyType="next"
+                    />
+                  </View>
+                </View>
+
+                {/* Suggestions for Cc */}
+                {activeRecipientField === "cc" && getSuggestions("cc").length > 0 && (
+                  <View
+                    style={[
+                      styles.suggestionsBox,
+                      {
+                        backgroundColor: colors.surface,
+                        borderBottomColor: colors.border,
+                      },
+                    ]}
+                  >
+                    {getSuggestions("cc").map((contact) => (
+                      <TouchableOpacity
+                        key={contact.address}
+                        style={[styles.suggestionItem, { borderBottomColor: colors.border }]}
+                        onPress={() => handleSelectSuggestion("cc", contact)}
+                      >
+                        <View style={[styles.suggestionAvatar, { backgroundColor: colors.primary }]}>
+                          <Text style={styles.suggestionAvatarText}>
+                            {(contact.name || contact.address).slice(0, 2).toUpperCase()}
+                          </Text>
+                        </View>
+                        <View style={styles.suggestionDetails}>
+                          {contact.name ? (
+                            <Text style={[styles.suggestionName, { color: colors.textPrimary }]} numberOfLines={1}>
+                              {contact.name}
+                            </Text>
+                          ) : null}
+                          <Text style={[styles.suggestionEmail, { color: colors.textSecondary }]} numberOfLines={1}>
+                            {contact.address}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </>
             )}
 
             {/* Subject Field */}
@@ -1859,6 +2446,71 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.sm,
     padding: 0,
   },
+  chipsContainer: {
+    flex: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 6,
+  },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: "90%",
+  },
+  chipText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.medium,
+    marginRight: 4,
+  },
+  chipRemove: {
+    padding: 2,
+  },
+  chipInput: {
+    flex: 1,
+    minWidth: 120,
+    fontSize: Typography.sizes.sm,
+    paddingVertical: 2,
+  },
+  suggestionsBox: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    maxHeight: 200,
+  },
+  suggestionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  suggestionAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: Spacing.sm,
+  },
+  suggestionAvatarText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.bold,
+    color: "#FFFFFF",
+  },
+  suggestionDetails: {
+    flex: 1,
+  },
+  suggestionName: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
+    marginBottom: 1,
+  },
+  suggestionEmail: {
+    fontSize: Typography.sizes.xs - 1,
+  },
   ccToggle: {
     paddingLeft: Spacing.sm,
   },
@@ -2120,5 +2772,22 @@ const styles = StyleSheet.create({
   },
   tzItemText: {
     fontSize: Typography.sizes.sm,
+  },
+  draftStatusBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  draftStatusText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: "500",
+  },
+  discardDraftText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: "600",
+    color: "#EF4444",
   },
 });
