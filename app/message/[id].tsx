@@ -42,16 +42,20 @@ import {
 } from "lucide-react-native";
 import { MoveFolderModal } from "../../src/components/MoveFolderModal";
 import { useTheme } from "../../src/context/ThemeContext";
+import { useAuth } from "../../src/context/AuthContext";
 import { api } from "../../src/services/api";
 import { getServerUrl, getAuthToken } from "../../src/services/storage";
-import { MessageDetail } from "../../src/types";
+import { resolveReplyRecipients } from "../../src/services/reply";
+import { MessageDetail, MailAccount } from "../../src/types";
 import { Spacing, Typography } from "../../src/constants/theme";
 
 export default function MessageDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { colors, isDark } = useTheme();
+  const { user } = useAuth();
 
+  const [accounts, setAccounts] = useState<MailAccount[]>([]);
   const [message, setMessage] = useState<MessageDetail | null>(null);
   const [thread, setThread] = useState<MessageDetail[]>([]);
   const [webViewHeight, setWebViewHeight] = useState(300);
@@ -72,6 +76,15 @@ export default function MessageDetailScreen() {
         setTrustedSenders(
           new Set((res.senders || []).map((s) => s.email.toLowerCase())),
         );
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    api.accounts
+      .list()
+      .then((res) => {
+        setAccounts(res.accounts || []);
       })
       .catch(() => {});
   }, []);
@@ -305,11 +318,23 @@ export default function MessageDetailScreen() {
 
   const handleReply = () => {
     if (!message) return;
+    const userEmails = [
+      user?.email,
+      message.account?.emailAddress,
+      ...accounts.map((a) => a.emailAddress),
+    ].filter(Boolean) as string[];
+
+    const resolved = resolveReplyRecipients({
+      targetMessage: message,
+      threadMessages: thread,
+      userEmails,
+    });
+
     router.push({
       pathname: "/compose",
       params: {
         accountId: message.accountId,
-        to: message.fromAddress,
+        to: resolved.toAddress,
         subject: message.subject?.toLowerCase().startsWith("re:")
           ? message.subject
           : `Re: ${message.subject || ""}`,
@@ -321,24 +346,27 @@ export default function MessageDetailScreen() {
 
   const handleReplyAll = () => {
     if (!message) return;
-    const allRecipients = [message.fromAddress];
-    try {
-      if (message.toAddresses) {
-        const toList = JSON.parse(message.toAddresses);
-        if (Array.isArray(toList)) {
-          allRecipients.push(
-            ...toList.filter((e) => e !== message.account?.emailAddress),
-          );
-        }
-      }
-    } catch {}
+    const userEmails = [
+      user?.email,
+      message.account?.emailAddress,
+      ...accounts.map((a) => a.emailAddress),
+    ].filter(Boolean) as string[];
+
+    const resolved = resolveReplyRecipients({
+      targetMessage: message,
+      threadMessages: thread,
+      userEmails,
+    });
 
     router.push({
       pathname: "/compose",
       params: {
         accountId: message.accountId,
-        to: allRecipients.join(", "),
-        cc: message.ccAddresses || undefined,
+        to: resolved.replyAllTo.join(", "),
+        cc:
+          resolved.replyAllCc.length > 0
+            ? resolved.replyAllCc.join(", ")
+            : undefined,
         subject: message.subject?.toLowerCase().startsWith("re:")
           ? message.subject
           : `Re: ${message.subject || ""}`,
