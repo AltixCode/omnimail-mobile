@@ -356,6 +356,27 @@ export const api = {
       return await request<{ accounts: MailAccount[] }>("/api/accounts");
     },
 
+    async exportJson(): Promise<any> {
+      return await request<any>("/api/accounts/export");
+    },
+
+    async importJson(payload: any): Promise<{
+      success: boolean;
+      summary: {
+        total: number;
+        created: number;
+        updated: number;
+        skipped: number;
+        duplicatesAvoided: number;
+        errors: Array<{ email: string; error: string }>;
+      };
+    }> {
+      return await request<any>("/api/accounts/import", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+
     async create(data: {
       label: string;
       emailAddress: string;

@@ -32,7 +32,13 @@ import {
   Bug,
   Globe,
   Check,
+  Download,
+  Upload,
+  FileJson,
 } from "lucide-react-native";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import { COMMON_TIMEZONES, getDeviceTimezone } from "../../src/services/timezone";
 import { errorTrackingEnabled, sendTestErrorReport } from "../../src/services/errorTracking";
 import { useAuth } from "../../src/context/AuthContext";
@@ -84,6 +90,80 @@ export default function SettingsScreen() {
   const [tzModalVisible, setTzModalVisible] = useState(false);
   const [tzSearch, setTzSearch] = useState("");
   const [savingTimezone, setSavingTimezone] = useState(false);
+
+  // JSON Backup state
+  const [isExportingAccounts, setIsExportingAccounts] = useState(false);
+  const [isImportingAccounts, setIsImportingAccounts] = useState(false);
+
+  const handleExportAccountsJson = async () => {
+    try {
+      setIsExportingAccounts(true);
+      const data = await api.accounts.exportJson();
+      const jsonStr = JSON.stringify(data, null, 2);
+      const filename = `omnimail-accounts-${new Date().toISOString().slice(0, 10)}.json`;
+      const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+      await FileSystem.writeAsStringAsync(fileUri, jsonStr, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "application/json",
+          dialogTitle: "Export OmniMail Accounts",
+          UTI: "public.json",
+        });
+      } else {
+        Alert.alert("Export Succeeded", `Accounts exported to ${filename}`);
+      }
+    } catch (err: any) {
+      Alert.alert("Export Failed", err.message || "Failed to export accounts");
+    } finally {
+      setIsExportingAccounts(false);
+    }
+  };
+
+  const handleImportAccountsJson = async () => {
+    try {
+      const pickerResult = await DocumentPicker.getDocumentAsync({
+        type: ["application/json", "text/json", "*/*"],
+        copyToCacheDirectory: true,
+      });
+
+      if (pickerResult.canceled || !pickerResult.assets || pickerResult.assets.length === 0) {
+        return;
+      }
+
+      const fileAsset = pickerResult.assets[0];
+      setIsImportingAccounts(true);
+      const fileContent = await FileSystem.readAsStringAsync(fileAsset.uri, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(fileContent);
+      } catch (parseErr) {
+        throw new Error("Invalid JSON file. Please ensure the file contains valid JSON.");
+      }
+
+      const res = await api.accounts.importJson(parsed);
+      if (res.success && res.summary) {
+        Alert.alert(
+          "Import Successful",
+          `Total accounts processed: ${res.summary.total}\n• New created: ${res.summary.created}\n• Existing updated: ${res.summary.updated}\n• Duplicates avoided: ${res.summary.duplicatesAvoided}${
+            res.summary.errors.length > 0 ? `\n• Warnings: ${res.summary.errors.length}` : ""
+          }`
+        );
+        loadAccounts();
+      } else {
+        throw new Error("Unexpected response from server during import");
+      }
+    } catch (err: any) {
+      Alert.alert("Import Failed", err.message || "Failed to import accounts");
+    } finally {
+      setIsImportingAccounts(false);
+    }
+  };
 
   useEffect(() => {
     loadAccounts();
@@ -412,6 +492,53 @@ export default function SettingsScreen() {
                 ]}
               >
                 Add
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* JSON Export / Import Action Row */}
+          <View style={styles.jsonActionRow}>
+            <TouchableOpacity
+              onPress={handleExportAccountsJson}
+              disabled={isExportingAccounts || accounts.length === 0}
+              style={[
+                styles.jsonActionBtn,
+                {
+                  backgroundColor: colors.surfaceHighlight,
+                  borderColor: colors.border,
+                  opacity: isExportingAccounts || accounts.length === 0 ? 0.5 : 1,
+                },
+              ]}
+            >
+              {isExportingAccounts ? (
+                <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
+              ) : (
+                <Download size={13} color={colors.textSecondary} style={{ marginRight: 6 }} />
+              )}
+              <Text style={[styles.jsonActionBtnText, { color: colors.textPrimary }]}>
+                Export JSON
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleImportAccountsJson}
+              disabled={isImportingAccounts}
+              style={[
+                styles.jsonActionBtn,
+                {
+                  backgroundColor: colors.primaryLight,
+                  borderColor: colors.primary,
+                  opacity: isImportingAccounts ? 0.5 : 1,
+                },
+              ]}
+            >
+              {isImportingAccounts ? (
+                <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
+              ) : (
+                <Upload size={13} color={colors.primary} style={{ marginRight: 6 }} />
+              )}
+              <Text style={[styles.jsonActionBtnText, { color: colors.primary }]}>
+                Import JSON
               </Text>
             </TouchableOpacity>
           </View>
@@ -1046,6 +1173,26 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   addAccountHeaderBtnText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
+  },
+  jsonActionRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  jsonActionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  jsonActionBtnText: {
     fontSize: Typography.sizes.xs,
     fontWeight: Typography.weights.semibold,
   },
