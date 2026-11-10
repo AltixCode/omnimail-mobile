@@ -485,15 +485,64 @@ export default function MessageDetailScreen() {
     return out;
   };
 
+  function cleanRedundantListMarkers(html: string): string {
+    if (!html) return "";
+    let cleaned = html.replace(
+      /(<ul\b[^>]*>[\s\S]*?<\/ul>)/gi,
+      (ulBlock) => {
+        return ulBlock.replace(
+          /(<li\b[^>]*>(?:\s*<(?:p|span|div)\b[^>]*>)*)([\s\u00a0]*(?:[-*+•·–—]|\d+[\.\)])[\s\u00a0]*)+/gi,
+          (match, prefix) => prefix
+        );
+      }
+    );
+    cleaned = cleaned.replace(
+      /(<ol\b[^>]*>[\s\S]*?<\/ol>)/gi,
+      (olBlock) => {
+        return olBlock.replace(
+          /(<li\b[^>]*>(?:\s*<(?:p|span|div)\b[^>]*>)*)([\s\u00a0]*(?:\d+[\.\)]|[-*+•·–—])[\s\u00a0]*)+/gi,
+          (match, prefix) => prefix
+        );
+      }
+    );
+    return cleaned;
+  }
+
+  function parseAddressesList(raw: string | null | undefined): string[] {
+    if (!raw || typeof raw !== "string") return [];
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => {
+            if (typeof item === "string") return item.trim();
+            if (item && typeof item === "object") {
+              if (item.name && item.address) return `${item.name} <${item.address}>`;
+              return item.address || item.name || "";
+            }
+            return "";
+          })
+          .filter(Boolean);
+      }
+    } catch {}
+    return trimmed
+      .split(/[,;]/)
+      .map((s) => s.trim().replace(/^<|>$/g, ""))
+      .filter(Boolean);
+  }
+
   // Build clean HTML document for WebView
   const getRenderHtml = () => {
     if (!message?.bodyHtml) return null;
     const textColor = isDark ? "#E2E8F0" : "#1E293B";
     const linkColor = isDark ? "#60A5FA" : "#2563EB";
     const bgColor = isDark ? "#111827" : "#FFFFFF";
+    const rawClean = cleanRedundantListMarkers(message.bodyHtml);
     const bodyHtml = loadRemoteImages
-      ? message.bodyHtml
-      : blockRemoteImages(message.bodyHtml);
+      ? rawClean
+      : blockRemoteImages(rawClean);
 
     return `
       <!DOCTYPE html>
@@ -515,6 +564,10 @@ export default function MessageDetailScreen() {
             a { color: ${linkColor}; text-decoration: underline; }
             img { max-width: 100% !important; height: auto !important; border-radius: 6px; }
             table { max-width: 100% !important; }
+            ul { list-style-type: disc !important; padding-left: 20px !important; margin: 0.5em 0 !important; }
+            ol { list-style-type: decimal !important; padding-left: 20px !important; margin: 0.5em 0 !important; }
+            li { margin: 0.25em 0 !important; }
+            li > p { margin: 0 0 0.25em 0 !important; }
             pre, code { white-space: pre-wrap; font-size: 13px; }
             blockquote { border-left: 3px solid ${isDark ? "#374151" : "#E2E8F0"}; margin-left: 0; padding-left: 12px; color: ${isDark ? "#9CA3AF" : "#64748B"}; }
           </style>
@@ -728,7 +781,7 @@ export default function MessageDetailScreen() {
         <View
           style={[styles.metaSection, { borderBottomColor: colors.border }]}
         >
-          <Text style={[styles.subjectTitle, { color: colors.textPrimary }]}>
+          <Text selectable style={[styles.subjectTitle, { color: colors.textPrimary }]}>
             {message.subject || "(No Subject)"}
           </Text>
 
@@ -771,32 +824,68 @@ export default function MessageDetailScreen() {
           </View>
 
           {/* Sender & Recipient Details */}
-          <View style={styles.senderRow}>
-            <View
-              style={[
-                styles.avatarCircle,
-                { backgroundColor: colors.primaryLight },
-              ]}
-            >
-              <Text style={[styles.avatarText, { color: colors.primary }]}>
-                {(message.fromName || message.fromAddress)
-                  .charAt(0)
-                  .toUpperCase()}
-              </Text>
-            </View>
+          {(() => {
+            const parsedTo = parseAddressesList(message.toAddresses);
+            const parsedCc = parseAddressesList(message.ccAddresses);
+            const parsedBcc = parseAddressesList(message.bccAddresses);
 
-            <View style={styles.senderInfo}>
-              <Text style={[styles.senderName, { color: colors.textPrimary }]}>
-                {message.fromName || message.fromAddress}
-              </Text>
-              <Text style={[styles.senderEmail, { color: colors.textMuted }]}>
-                {message.fromAddress}
-              </Text>
-              <Text style={[styles.dateFormatted, { color: colors.textMuted }]}>
-                {formatDate(message.date)}
-              </Text>
-            </View>
-          </View>
+            return (
+              <View style={styles.senderRow}>
+                <View
+                  style={[
+                    styles.avatarCircle,
+                    { backgroundColor: colors.primaryLight },
+                  ]}
+                >
+                  <Text style={[styles.avatarText, { color: colors.primary }]}>
+                    {(message.fromName || message.fromAddress)
+                      .charAt(0)
+                      .toUpperCase()}
+                  </Text>
+                </View>
+
+                <View style={styles.senderInfo}>
+                  <Text selectable style={[styles.senderName, { color: colors.textPrimary }]}>
+                    {message.fromName || message.fromAddress}
+                  </Text>
+                  <Text selectable style={[styles.senderEmail, { color: colors.textMuted }]}>
+                    {message.fromAddress}
+                  </Text>
+
+                  {parsedTo.length > 0 && (
+                    <View style={styles.recipientRow}>
+                      <Text style={[styles.recipientLabel, { color: colors.textMuted }]}>To: </Text>
+                      <Text selectable style={[styles.recipientValue, { color: colors.textSecondary }]}>
+                        {parsedTo.join(", ")}
+                      </Text>
+                    </View>
+                  )}
+
+                  {parsedCc.length > 0 && (
+                    <View style={styles.recipientRow}>
+                      <Text style={[styles.recipientLabel, { color: colors.textMuted }]}>Cc: </Text>
+                      <Text selectable style={[styles.recipientValue, { color: colors.textSecondary }]}>
+                        {parsedCc.join(", ")}
+                      </Text>
+                    </View>
+                  )}
+
+                  {parsedBcc.length > 0 && (
+                    <View style={styles.recipientRow}>
+                      <Text style={[styles.recipientLabel, { color: colors.textMuted }]}>Bcc: </Text>
+                      <Text selectable style={[styles.recipientValue, { color: colors.textSecondary }]}>
+                        {parsedBcc.join(", ")}
+                      </Text>
+                    </View>
+                  )}
+
+                  <Text selectable style={[styles.dateFormatted, { color: colors.textMuted }]}>
+                    {formatDate(message.date)}
+                  </Text>
+                </View>
+              </View>
+            );
+          })()}
         </View>
 
         {/* Spam Banner */}
@@ -1359,6 +1448,20 @@ const styles = StyleSheet.create({
   dateFormatted: {
     fontSize: Typography.sizes.xs,
     marginTop: 2,
+  },
+  recipientRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "baseline",
+    marginTop: 2,
+  },
+  recipientLabel: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.medium,
+  },
+  recipientValue: {
+    fontSize: Typography.sizes.xs,
+    flexShrink: 1,
   },
   bodyContainer: {
     padding: Spacing.lg,

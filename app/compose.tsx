@@ -74,6 +74,29 @@ function htmlToPlainText(html: string): string {
     .trim();
 }
 
+function cleanRedundantListMarkers(html: string): string {
+  if (!html) return "";
+  let cleaned = html.replace(
+    /(<ul\b[^>]*>[\s\S]*?<\/ul>)/gi,
+    (ulBlock) => {
+      return ulBlock.replace(
+        /(<li\b[^>]*>(?:\s*<(?:p|span|div)\b[^>]*>)*)([\s\u00a0]*(?:[-*+•·–—]|\d+[\.\)])[\s\u00a0]*)+/gi,
+        (match, prefix) => prefix
+      );
+    }
+  );
+  cleaned = cleaned.replace(
+    /(<ol\b[^>]*>[\s\S]*?<\/ol>)/gi,
+    (olBlock) => {
+      return olBlock.replace(
+        /(<li\b[^>]*>(?:\s*<(?:p|span|div)\b[^>]*>)*)([\s\u00a0]*(?:\d+[\.\)]|[-*+•·–—])[\s\u00a0]*)+/gi,
+        (match, prefix) => prefix
+      );
+    }
+  );
+  return cleaned;
+}
+
 function formatScheduledDisplay(isoString: string, timeZone: string): string {
   try {
     const d = new Date(isoString);
@@ -168,17 +191,79 @@ export default function ComposeScreen() {
       .catch(() => {});
 
     api.contacts
-      .list(undefined, 100)
+      .list(undefined, 500)
       .then((res) => {
         if (res.contacts && Array.isArray(res.contacts)) {
-          setContacts(res.contacts);
-          saveStoredContacts(res.contacts).catch(() => {});
+          setContacts((prev) => {
+            const map = new Map(prev.map((c) => [c.address.toLowerCase(), c]));
+            for (const c of res.contacts) {
+              map.set(c.address.toLowerCase(), c);
+            }
+            const merged = Array.from(map.values());
+            saveStoredContacts(merged).catch(() => {});
+            return merged;
+          });
         }
       })
       .catch((err) => {
         console.warn("Could not fetch remote contacts:", err);
       });
   }, []);
+
+  // Merge all user accounts into contacts for global cross-account autocomplete
+  useEffect(() => {
+    if (accounts && accounts.length > 0) {
+      setContacts((prev) => {
+        const map = new Map(prev.map((c) => [c.address.toLowerCase(), c]));
+        let modified = false;
+        for (const acc of accounts) {
+          if (acc.emailAddress) {
+            const lower = acc.emailAddress.toLowerCase();
+            if (!map.has(lower)) {
+              map.set(lower, {
+                address: lower,
+                name: acc.label || null,
+                count: 500,
+              });
+              modified = true;
+            }
+          }
+        }
+        return modified ? Array.from(map.values()) : prev;
+      });
+    }
+  }, [accounts]);
+
+  // Debounced server search to guarantee any known contact across all accounts is suggested
+  useEffect(() => {
+    const rawVal = activeRecipientField === "to" ? toInput : activeRecipientField === "cc" ? ccInput : "";
+    const query = rawVal.trim().toLowerCase();
+    if (query.length < 2) return;
+
+    const timer = setTimeout(() => {
+      api.contacts
+        .list(query, 50)
+        .then((res) => {
+          if (res.contacts && Array.isArray(res.contacts)) {
+            setContacts((prev) => {
+              const map = new Map(prev.map((c) => [c.address.toLowerCase(), c]));
+              let added = false;
+              for (const c of res.contacts) {
+                const lower = c.address.toLowerCase();
+                if (!map.has(lower)) {
+                  map.set(lower, c);
+                  added = true;
+                }
+              }
+              return added ? Array.from(map.values()) : prev;
+            });
+          }
+        })
+        .catch(() => {});
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [toInput, ccInput, activeRecipientField]);
 
   const getCleanRecipients = (chips: string[], currentInput: string): string[] => {
     const list = [...chips];
@@ -208,7 +293,7 @@ export default function ComposeScreen() {
           (c.name && c.name.toLowerCase().includes(query))
         );
       })
-      .slice(0, 5);
+      .slice(0, 10);
   };
 
   const handleRecipientTextChange = (field: "to" | "cc", text: string) => {
@@ -739,14 +824,15 @@ export default function ComposeScreen() {
     try {
       setDraftStatus("saving");
       const encodedAttachments = await getEncodedAttachments();
+      const cleanHtml = cleanRedundantListMarkers(editorHtml);
       const res = await api.messages.draft.save({
         draftId: draftId || undefined,
         accountId: accId,
         to: finalTo,
         cc: finalCc.length > 0 ? finalCc : undefined,
         subject: subject.trim(),
-        bodyText: plain,
-        bodyHtml: editorHtml,
+        bodyText: htmlToPlainText(cleanHtml),
+        bodyHtml: cleanHtml,
         inReplyTo: params.inReplyTo,
         threadId: params.threadId,
         attachments: encodedAttachments,
@@ -838,14 +924,15 @@ export default function ComposeScreen() {
       const encodedAttachments = await getEncodedAttachments();
       const finalTo = getCleanRecipients(toChips, toInput);
       const finalCc = getCleanRecipients(ccChips, ccInput);
+      const cleanHtml = cleanRedundantListMarkers(editorHtml);
 
       await api.messages.send({
         accountId: selectedAccountId,
         to: finalTo,
         cc: finalCc.length > 0 ? finalCc : undefined,
         subject: subject.trim(),
-        bodyText: htmlToPlainText(editorHtml),
-        bodyHtml: editorHtml,
+        bodyText: htmlToPlainText(cleanHtml),
+        bodyHtml: cleanHtml,
         inReplyTo: params.inReplyTo,
         references: params.references,
         threadId: params.threadId,
@@ -942,14 +1029,16 @@ export default function ComposeScreen() {
         minute: "2-digit",
       }).format(finalTargetDate);
 
+      const cleanHtml = cleanRedundantListMarkers(editorHtml);
+
       if (isScheduledEdit && cleanScheduledId) {
         await api.messages.scheduled.update(cleanScheduledId, {
           accountId: selectedAccountId,
           to: finalTo,
           cc: finalCc.length > 0 ? finalCc : undefined,
           subject: subject.trim(),
-          bodyText: htmlToPlainText(editorHtml),
-          bodyHtml: editorHtml,
+          bodyText: htmlToPlainText(cleanHtml),
+          bodyHtml: cleanHtml,
           scheduledAt: scheduledAtISO,
           timezone: scheduleTimezone,
           draftId: draftId || undefined,
@@ -970,8 +1059,8 @@ export default function ComposeScreen() {
           to: finalTo,
           cc: finalCc.length > 0 ? finalCc : undefined,
           subject: subject.trim(),
-          bodyText: htmlToPlainText(editorHtml),
-          bodyHtml: editorHtml,
+          bodyText: htmlToPlainText(cleanHtml),
+          bodyHtml: cleanHtml,
           inReplyTo: params.inReplyTo,
           references: params.references,
           threadId: params.threadId,
