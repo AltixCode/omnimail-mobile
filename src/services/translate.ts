@@ -40,7 +40,32 @@ function parseLlmJson(rawContent: string): any {
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
     cleaned = cleaned.slice(firstBrace, lastBrace + 1);
   }
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const subjectMatch = cleaned.match(/"subject"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    const detectedLangMatch = cleaned.match(/"detectedLanguage"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    const isEnglishMatch = cleaned.match(/"isAlreadyEnglish"\s*:\s*(true|false)/i);
+    const bodyTextMatch = cleaned.match(/"bodyText"\s*:\s*"((?:\\.|[^"\\])*)"/);
+
+    if (subjectMatch || bodyTextMatch) {
+      return {
+        subject: subjectMatch ? JSON.parse(`"${subjectMatch[1]}"`) : undefined,
+        bodyHtml: null,
+        bodyText: bodyTextMatch ? JSON.parse(`"${bodyTextMatch[1]}"`) : cleaned,
+        detectedLanguage: detectedLangMatch ? detectedLangMatch[1] : "Unknown",
+        isAlreadyEnglish: isEnglishMatch ? isEnglishMatch[1].toLowerCase() === "true" : false,
+      };
+    }
+
+    return {
+      subject: "",
+      bodyHtml: null,
+      bodyText: rawContent.trim(),
+      detectedLanguage: "Unknown",
+      isAlreadyEnglish: false,
+    };
+  }
 }
 
 /**
@@ -52,17 +77,20 @@ async function translateDirectWithAiProxy(
   bodyText: string | null,
   targetLanguage: string = "English",
 ): Promise<TranslationResult> {
-  let processedHtml = bodyHtml;
+  let sendHtmlToLlm = false;
+  let processedHtml: string | null = null;
   let restoreHtmlImages: ((str: string) => string) | null = null;
 
-  if (processedHtml) {
-    const { sanitizedHtml, restore } = isolateDataUris(processedHtml);
+  if (bodyHtml && bodyHtml.length <= 12000) {
+    const { sanitizedHtml, restore } = isolateDataUris(bodyHtml);
     processedHtml = sanitizedHtml;
     restoreHtmlImages = restore;
+    sendHtmlToLlm = true;
+  }
 
-    if (processedHtml.length > 70000) {
-      processedHtml = processedHtml.slice(0, 70000) + "... [truncated]";
-    }
+  let textToTranslate = bodyText;
+  if (textToTranslate && textToTranslate.length > 25000) {
+    textToTranslate = textToTranslate.slice(0, 25000) + "\n\n... [Content truncated for translation]";
   }
 
   const systemPrompt = `You are an expert multilingual email translation engine.
@@ -84,8 +112,8 @@ Guidelines:
 
   const payload = JSON.stringify({
     subject: subject.trim(),
-    bodyHtml: processedHtml,
-    bodyText: bodyText ? (bodyText.length > 40000 ? bodyText.slice(0, 40000) : bodyText) : null,
+    bodyHtml: sendHtmlToLlm ? processedHtml : null,
+    bodyText: textToTranslate || null,
   });
 
   const response = await fetch(AI_PROXY_URL, {
