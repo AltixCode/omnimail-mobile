@@ -39,6 +39,7 @@ import {
   FolderInput,
   Clock,
   Send,
+  Languages,
 } from "lucide-react-native";
 import { MoveFolderModal } from "../../src/components/MoveFolderModal";
 import { useTheme } from "../../src/context/ThemeContext";
@@ -46,7 +47,8 @@ import { useAuth } from "../../src/context/AuthContext";
 import { api } from "../../src/services/api";
 import { getServerUrl, getAuthToken } from "../../src/services/storage";
 import { resolveReplyRecipients } from "../../src/services/reply";
-import { MessageDetail, MailAccount } from "../../src/types";
+import { translateEmailMessage } from "../../src/services/translate";
+import { MessageDetail, MailAccount, TranslationResult } from "../../src/types";
 import { Spacing, Typography } from "../../src/constants/theme";
 
 export default function MessageDetailScreen() {
@@ -68,6 +70,39 @@ export default function MessageDetailScreen() {
   const [trustedSenders, setTrustedSenders] = useState<Set<string>>(new Set());
   const [loadRemoteImages, setLoadRemoteImages] = useState(false);
   const [trustingSender, setTrustingSender] = useState(false);
+
+  // Translation state
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translatedData, setTranslatedData] = useState<TranslationResult | null>(null);
+  const [showTranslated, setShowTranslated] = useState(false);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+
+  const handleTranslate = async () => {
+    if (!message) return;
+    if (translatedData) {
+      setShowTranslated((prev) => !prev);
+      return;
+    }
+    setIsTranslating(true);
+    setTranslationError(null);
+    try {
+      const result = await translateEmailMessage({
+        id: message.id,
+        subject: message.subject,
+        bodyHtml: message.bodyHtml,
+        bodyText: message.bodyText,
+      });
+      setTranslatedData(result);
+      setShowTranslated(true);
+    } catch (err: any) {
+      console.error("Translation error:", err);
+      const msg = err.message || "Failed to translate email";
+      setTranslationError(msg);
+      Alert.alert("Translation Failed", msg);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
 
   useEffect(() => {
     api.settings.trustedSenders
@@ -535,11 +570,18 @@ export default function MessageDetailScreen() {
 
   // Build clean HTML document for WebView
   const getRenderHtml = () => {
-    if (!message?.bodyHtml) return null;
+    const rawContent =
+      showTranslated && translatedData
+        ? translatedData.bodyHtml ||
+          (translatedData.bodyText
+            ? `<p style="white-space: pre-wrap;">${translatedData.bodyText}</p>`
+            : null)
+        : message?.bodyHtml;
+    if (!rawContent) return null;
     const textColor = isDark ? "#E2E8F0" : "#1E293B";
     const linkColor = isDark ? "#60A5FA" : "#2563EB";
     const bgColor = isDark ? "#111827" : "#FFFFFF";
-    const rawClean = cleanRedundantListMarkers(message.bodyHtml);
+    const rawClean = cleanRedundantListMarkers(rawContent);
     const bodyHtml = loadRemoteImages
       ? rawClean
       : blockRemoteImages(rawClean);
@@ -672,6 +714,22 @@ export default function MessageDetailScreen() {
 
         <View style={styles.navActions}>
           <TouchableOpacity
+            onPress={handleTranslate}
+            disabled={isTranslating}
+            style={styles.navActionButton}
+            accessibilityLabel="Translate email to English"
+          >
+            {isTranslating ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Languages
+                size={20}
+                color={showTranslated ? colors.primary : colors.textSecondary}
+              />
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
             onPress={handleToggleStar}
             style={styles.navActionButton}
           >
@@ -782,11 +840,40 @@ export default function MessageDetailScreen() {
           style={[styles.metaSection, { borderBottomColor: colors.border }]}
         >
           <Text selectable style={[styles.subjectTitle, { color: colors.textPrimary }]}>
-            {message.subject || "(No Subject)"}
+            {showTranslated && translatedData?.subject
+              ? translatedData.subject
+              : message.subject || "(No Subject)"}
           </Text>
 
           {/* Account & Folder Badges */}
           <View style={styles.badgeRow}>
+            {showTranslated && translatedData && (
+              <View
+                style={[
+                  styles.badge,
+                  {
+                    backgroundColor: colors.primaryLight,
+                    borderColor: colors.primary,
+                    flexDirection: "row",
+                    alignItems: "center",
+                  },
+                ]}
+              >
+                <Languages
+                  size={11}
+                  color={colors.primary}
+                  style={{ marginRight: 3 }}
+                />
+                <Text
+                  style={[
+                    styles.badgeText,
+                    { color: colors.primary, fontWeight: "600" },
+                  ]}
+                >
+                  {translatedData.detectedLanguage} → EN
+                </Text>
+              </View>
+            )}
             {message.account?.label && (
               <View
                 style={[
@@ -887,6 +974,156 @@ export default function MessageDetailScreen() {
             );
           })()}
         </View>
+
+        {/* Translation Banner / Action */}
+        {showTranslated && translatedData ? (
+          <View
+            style={[
+              styles.translationBanner,
+              {
+                backgroundColor: isDark
+                  ? "rgba(37, 99, 235, 0.15)"
+                  : "#EFF6FF",
+                borderColor: isDark
+                  ? "rgba(37, 99, 235, 0.35)"
+                  : "#BFDBFE",
+              },
+            ]}
+          >
+            <View style={styles.translationBannerRow}>
+              <Languages size={16} color={colors.primary} />
+              <Text
+                style={[
+                  styles.translationBannerText,
+                  { color: isDark ? "#93C5FD" : "#1E40AF" },
+                ]}
+              >
+                Translated from{" "}
+                <Text style={{ fontWeight: "700" }}>
+                  {translatedData.detectedLanguage}
+                </Text>{" "}
+                to English
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setShowTranslated(false)}
+              style={[
+                styles.viewOriginalBtn,
+                { backgroundColor: isDark ? "#1E293B" : "#DBEAFE" },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.viewOriginalBtnText,
+                  { color: colors.primary },
+                ]}
+              >
+                View Original
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : translatedData ? (
+          <View style={styles.translateActionContainer}>
+            <TouchableOpacity
+              onPress={() => setShowTranslated(true)}
+              style={[
+                styles.translateButton,
+                {
+                  backgroundColor: isDark
+                    ? "rgba(37, 99, 235, 0.15)"
+                    : "#EFF6FF",
+                  borderColor: isDark ? "#1D4ED8" : "#BFDBFE",
+                },
+              ]}
+            >
+              <Languages
+                size={14}
+                color={colors.primary}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.translateButtonText,
+                  { color: colors.primary },
+                ]}
+              >
+                Show Translation ({translatedData.detectedLanguage} → EN)
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.translateActionContainer}>
+            <TouchableOpacity
+              onPress={handleTranslate}
+              disabled={isTranslating}
+              style={[
+                styles.translateButton,
+                {
+                  backgroundColor: isDark
+                    ? "rgba(37, 99, 235, 0.15)"
+                    : "#EFF6FF",
+                  borderColor: isDark ? "#1D4ED8" : "#BFDBFE",
+                },
+              ]}
+            >
+              {isTranslating ? (
+                <ActivityIndicator
+                  size="small"
+                  color={colors.primary}
+                  style={{ marginRight: 6 }}
+                />
+              ) : (
+                <Languages
+                  size={14}
+                  color={colors.primary}
+                  style={{ marginRight: 6 }}
+                />
+              )}
+              <Text
+                style={[
+                  styles.translateButtonText,
+                  { color: colors.primary },
+                ]}
+              >
+                {isTranslating
+                  ? "Translating to English..."
+                  : "Translate to English"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {translationError && (
+          <View
+            style={[
+              styles.translationErrorBanner,
+              {
+                backgroundColor: isDark
+                  ? "rgba(239, 68, 68, 0.15)"
+                  : "#FEF2F2",
+                borderColor: isDark
+                  ? "rgba(239, 68, 68, 0.3)"
+                  : "#FECACA",
+              },
+            ]}
+          >
+            <Text
+              style={[styles.translationErrorText, { color: colors.danger }]}
+            >
+              Translation error: {translationError}
+            </Text>
+            <TouchableOpacity onPress={handleTranslate}>
+              <Text
+                style={[
+                  styles.retryText,
+                  { color: colors.danger, fontWeight: "700" },
+                ]}
+              >
+                Retry
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Spam Banner */}
         {isSpam && (
@@ -1001,7 +1238,8 @@ export default function MessageDetailScreen() {
 
         {/* Email Body Rendering */}
         <View style={styles.bodyContainer}>
-          {message.bodyHtml ? (
+          {(showTranslated && translatedData?.bodyHtml) ||
+          (!showTranslated && message.bodyHtml) ? (
             <View style={styles.webViewWrapper}>
               {Platform.OS === "web" ? (
                 <iframe
@@ -1041,7 +1279,9 @@ export default function MessageDetailScreen() {
               selectable
               style={[styles.bodyPlaintext, { color: colors.textPrimary }]}
             >
-              {message.bodyText || "(No message body content)"}
+              {(showTranslated && translatedData?.bodyText) ||
+                message.bodyText ||
+                "(No message body content)"}
             </Text>
           )}
         </View>
@@ -1600,5 +1840,71 @@ const styles = StyleSheet.create({
   bottomActionText: {
     fontSize: Typography.sizes.sm,
     fontWeight: Typography.weights.semibold,
+  },
+  translateActionContainer: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.sm,
+  },
+  translateButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  translateButtonText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.semibold,
+  },
+  translationBanner: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.sm,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: Spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  translationBannerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+  },
+  translationBannerText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.medium,
+    flexShrink: 1,
+  },
+  viewOriginalBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  viewOriginalBtnText: {
+    fontSize: Typography.sizes.xs,
+    fontWeight: Typography.weights.bold,
+  },
+  translationErrorBanner: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.sm,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: Spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  translationErrorText: {
+    fontSize: Typography.sizes.xs,
+    flex: 1,
+  },
+  retryText: {
+    fontSize: Typography.sizes.xs,
+    marginLeft: 8,
   },
 });

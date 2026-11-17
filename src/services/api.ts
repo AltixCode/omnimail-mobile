@@ -232,6 +232,32 @@ export const api = {
       });
     },
 
+    async translate(
+      id: string,
+      targetLanguage: string = "English",
+    ): Promise<{
+      success: boolean;
+      messageId: string;
+      original: {
+        subject: string | null;
+        bodyHtml: string | null;
+        bodyText: string | null;
+      };
+      translated: {
+        subject: string;
+        bodyHtml: string | null;
+        bodyText: string | null;
+        detectedLanguage: string;
+        isAlreadyEnglish: boolean;
+        model: string;
+      };
+    }> {
+      return await request(`/api/messages/${encodeURIComponent(id)}/translate`, {
+        method: "POST",
+        body: JSON.stringify({ targetLanguage }),
+      });
+    },
+
     async batch(
       messageIds: string[],
       action:

@@ -153,3 +153,13 @@ export interface ContactEntry {
   lastContactedAt?: string | null;
   count?: number;
 }
+
+export interface TranslationResult {
+  subject: string;
+  bodyHtml: string | null;
+  bodyText: string | null;
+  detectedLanguage: string;
+  isAlreadyEnglish: boolean;
+  model: string;
+}
+
