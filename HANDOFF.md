@@ -44,6 +44,7 @@ OmniMail Mobile is the companion mobile application for OmniMail. It connects to
 | `/api/devices` | `POST` | Registers Expo push token `{ token, platform, deviceId, deviceModel }` |
 | `/api/devices` | `DELETE` | Unregisters push token on logout or permission revocation |
 | `/api/devices/test-push` | `POST` | Triggers a real test notification to the user's active device |
+| `/api/ai/assist` | `POST` | Context-aware AI email drafting ("Help me write") & professional rephrasing via Gemini 3.8 |
 
 ---
 
@@ -76,6 +77,10 @@ OmniMail Mobile is the companion mobile application for OmniMail. It connects to
 4. **`app/compose.tsx`**:
    - Outbound composer with account selector dropdown.
    - To, Cc, Subject, multiline body.
+   - Context-aware AI Assistant:
+     - **Help me write (Draft with AI)**: Gmail-style prompt modal with tone selector and live preview.
+     - **Rephrase**: Professional 1-tap rephrasing grounded in the entire email thread.
+     - **Undo**: 1-tap instant revert banner.
    - Dispatches via `POST /api/messages/send`.
 5. **`app/(tabs)/calendar.tsx`**:
    - Agenda view grouping events by date (Today, Tomorrow, upcoming dates).

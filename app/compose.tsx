@@ -35,6 +35,9 @@ import {
   Search,
   AlertCircle,
   Save,
+  Sparkles,
+  WandSparkles,
+  RotateCcw,
 } from "lucide-react-native";
 import { useTheme } from "../src/context/ThemeContext";
 import { api } from "../src/services/api";
@@ -134,6 +137,7 @@ export default function ComposeScreen() {
     threadId?: string;
     scheduledId?: string;
     draftId?: string;
+    replyToMessageId?: string;
   }>();
 
   const isScheduledEdit = Boolean(params.scheduledId);
@@ -407,6 +411,130 @@ export default function ComposeScreen() {
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
   const [sending, setSending] = useState(false);
   const [accountModalVisible, setAccountModalVisible] = useState(false);
+
+  // AI Help Me Write & Rephrasing states
+  const [aiModalVisible, setAiModalVisible] = useState(false);
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiTone, setAiTone] = useState("professional");
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [isRephrasing, setIsRephrasing] = useState(false);
+  const [aiDraftResult, setAiDraftResult] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [previousHtml, setPreviousHtml] = useState<string | null>(null);
+  const [showUndoBanner, setShowUndoBanner] = useState(false);
+
+  const setEditorContent = (html: string) => {
+    setEditorHtml(html);
+    webviewRef.current?.injectJavaScript(`
+      var editor = document.getElementById('editor');
+      if (editor) {
+        editor.innerHTML = ${JSON.stringify(html)};
+        reportHeight();
+        reportContent();
+      }
+      true;
+    `);
+  };
+
+  const handleAiRephrase = async () => {
+    const plainText = htmlToPlainText(editorHtml).trim();
+    if (!plainText) {
+      Alert.alert(
+        "Nothing to Rephrase",
+        "Please write some basic text in your email first, or tap 'Draft with AI' to write from scratch.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Draft with AI",
+            onPress: () => {
+              setAiModalVisible(true);
+              setAiInstruction("");
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    setIsRephrasing(true);
+    setAiError(null);
+    try {
+      setPreviousHtml(editorHtml);
+      const res = await api.ai.assist({
+        action: "rephrase",
+        text: plainText,
+        tone: aiTone,
+        messageId: params.replyToMessageId,
+        threadId: params.threadId,
+        subject,
+        recipient: toChips.join(", "),
+      });
+
+      if (res && res.text) {
+        const newHtml = plainTextToHtml(res.text);
+        setEditorContent(newHtml);
+        setShowUndoBanner(true);
+        setTimeout(() => setShowUndoBanner(false), 8000);
+      }
+    } catch (err: any) {
+      Alert.alert("AI Error", err.message || "Failed to rephrase email.");
+    } finally {
+      setIsRephrasing(false);
+    }
+  };
+
+  const handleAiDraft = async () => {
+    const plainText = htmlToPlainText(editorHtml).trim();
+    const prompt = aiInstruction.trim();
+
+    if (!prompt && !plainText) {
+      setAiError("Please enter what you want the email to say or change.");
+      return;
+    }
+
+    setIsAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await api.ai.assist({
+        action: "draft",
+        text: plainText,
+        instruction: prompt || "Draft a helpful, professional reply based on the thread context.",
+        tone: aiTone,
+        messageId: params.replyToMessageId,
+        threadId: params.threadId,
+        subject,
+        recipient: toChips.join(", "),
+      });
+
+      if (res && res.text) {
+        setAiDraftResult(res.text);
+      }
+    } catch (err: any) {
+      setAiError(err.message || "Failed to draft email with AI.");
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const handleInsertAiDraft = () => {
+    if (!aiDraftResult) return;
+    setPreviousHtml(editorHtml);
+    const newHtml = plainTextToHtml(aiDraftResult);
+    setEditorContent(newHtml);
+    setAiDraftResult(null);
+    setAiInstruction("");
+    setAiModalVisible(false);
+    setShowUndoBanner(true);
+    setTimeout(() => setShowUndoBanner(false), 8000);
+  };
+
+  const handleUndoAi = () => {
+    if (previousHtml !== null) {
+      setEditorContent(previousHtml);
+      setPreviousHtml(null);
+      setShowUndoBanner(false);
+    }
+  };
 
   const runEditorCommand = (command: string) => {
     webviewRef.current?.injectJavaScript(
@@ -1835,7 +1963,87 @@ export default function ComposeScreen() {
               >
                 <List size={17} color={colors.textPrimary} />
               </TouchableOpacity>
+
+              <View style={styles.rtToolbarDivider} />
+
+              {/* AI Draft Button */}
+              <TouchableOpacity
+                onPress={() => {
+                  setAiModalVisible(true);
+                  setAiError(null);
+                }}
+                style={[
+                  styles.aiActionButton,
+                  {
+                    backgroundColor: isDark ? "#312E81" : "#EEF2FF",
+                    borderColor: isDark ? "#4338CA" : "#C7D2FE",
+                  },
+                ]}
+                activeOpacity={0.7}
+              >
+                <Sparkles size={13} color="#6366F1" style={{ marginRight: 4 }} />
+                <Text
+                  style={[
+                    styles.aiActionText,
+                    { color: isDark ? "#C7D2FE" : "#4F46E5" },
+                  ]}
+                >
+                  Help me write
+                </Text>
+              </TouchableOpacity>
+
+              {/* AI Rephrase Button */}
+              <TouchableOpacity
+                onPress={handleAiRephrase}
+                disabled={isRephrasing}
+                style={[
+                  styles.aiActionButton,
+                  {
+                    backgroundColor: isDark ? "#3B0764" : "#FAF5FF",
+                    borderColor: isDark ? "#6B21A8" : "#E9D5FF",
+                  },
+                ]}
+                activeOpacity={0.7}
+              >
+                {isRephrasing ? (
+                  <ActivityIndicator size="small" color="#9333EA" style={{ marginRight: 4 }} />
+                ) : (
+                  <WandSparkles size={13} color="#9333EA" style={{ marginRight: 4 }} />
+                )}
+                <Text
+                  style={[
+                    styles.aiActionText,
+                    { color: isDark ? "#E9D5FF" : "#7E22CE" },
+                  ]}
+                >
+                  {isRephrasing ? "Rephrasing..." : "Rephrase"}
+                </Text>
+              </TouchableOpacity>
             </View>
+
+            {/* AI Undo Banner */}
+            {showUndoBanner && (
+              <View
+                style={[
+                  styles.undoBanner,
+                  {
+                    backgroundColor: isDark ? "#2E1065" : "#F3E8FF",
+                    borderBottomColor: isDark ? "#581C87" : "#D8B4FE",
+                  },
+                ]}
+              >
+                <View style={styles.undoBannerLeft}>
+                  <Sparkles size={14} color="#9333EA" />
+                  <Text style={[styles.undoBannerText, { color: isDark ? "#E9D5FF" : "#6B21A8" }]}>
+                    Updated with AI ✨
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={handleUndoAi} style={styles.undoBtn}>
+                  <RotateCcw size={12} color="#7E22CE" style={{ marginRight: 4 }} />
+                  <Text style={styles.undoBtnText}>Undo</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Body Rich Text Editor */}
             {Platform.OS === "web" ? (
@@ -2409,6 +2617,232 @@ export default function ComposeScreen() {
           </View>
         </SafeAreaView>
       </Modal>
+
+      {/* AI Help Me Write Modal */}
+      <Modal
+        visible={aiModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          if (!isAiLoading) {
+            setAiModalVisible(false);
+            setAiDraftResult(null);
+            setAiError(null);
+          }
+        }}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.aiModalOverlay}
+        >
+          <View
+            style={[
+              styles.aiModalContent,
+              {
+                backgroundColor: isDark ? "#1E293B" : "#FFFFFF",
+                borderTopColor: colors.border,
+              },
+            ]}
+          >
+            {/* Header */}
+            <View style={styles.aiModalHeader}>
+              <View style={styles.aiModalTitleRow}>
+                <Sparkles size={20} color="#6366F1" />
+                <View>
+                  <Text
+                    style={[
+                      styles.aiModalTitle,
+                      { color: colors.textPrimary },
+                    ]}
+                  >
+                    Help me write
+                  </Text>
+                  <Text style={styles.aiModalSubtitle}>
+                    Context-aware via Gemini 3.8
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setAiModalVisible(false);
+                  setAiDraftResult(null);
+                  setAiError(null);
+                }}
+                disabled={isAiLoading}
+                style={{ padding: 4 }}
+              >
+                <X size={20} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Tone Selector */}
+            <View style={styles.aiToneRow}>
+              {(["professional", "casual", "concise", "formal"] as const).map(
+                (t) => (
+                  <TouchableOpacity
+                    key={t}
+                    onPress={() => setAiTone(t)}
+                    style={[
+                      styles.aiToneChip,
+                      {
+                        backgroundColor:
+                          aiTone === t
+                            ? "#4F46E5"
+                            : isDark
+                            ? "#334155"
+                            : "#F1F5F9",
+                        borderColor:
+                          aiTone === t
+                            ? "#4338CA"
+                            : isDark
+                            ? "#475569"
+                            : "#E2E8F0",
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.aiToneChipText,
+                        {
+                          color:
+                            aiTone === t
+                              ? "#FFFFFF"
+                              : isDark
+                              ? "#E2E8F0"
+                              : "#475569",
+                        },
+                      ]}
+                    >
+                      {t}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              )}
+            </View>
+
+            {/* Instruction Input */}
+            <View
+              style={[
+                styles.aiInputContainer,
+                {
+                  backgroundColor: isDark ? "#0F172A" : "#F8FAFC",
+                  borderColor: isDark ? "#334155" : "#E2E8F0",
+                },
+              ]}
+            >
+              <TextInput
+                value={aiInstruction}
+                onChangeText={setAiInstruction}
+                placeholder={
+                  htmlToPlainText(editorHtml).trim()
+                    ? "Tell AI what to change about this draft... (e.g. 'Make it shorter', 'Ask for Friday instead')"
+                    : "What do you want this email to say? (e.g. 'Politely decline the invite and propose next Tuesday at 3pm')"
+                }
+                placeholderTextColor={colors.textMuted}
+                multiline
+                style={[
+                  styles.aiInput,
+                  { color: colors.textPrimary },
+                ]}
+                editable={!isAiLoading}
+              />
+            </View>
+
+            {aiError && (
+              <Text style={styles.aiErrorText}>{aiError}</Text>
+            )}
+
+            {/* Action Buttons */}
+            <View style={styles.aiActionRow}>
+              <TouchableOpacity
+                onPress={handleAiDraft}
+                disabled={isAiLoading}
+                style={[
+                  styles.aiGenerateBtn,
+                  isAiLoading && { opacity: 0.6 },
+                ]}
+              >
+                {isAiLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Sparkles size={16} color="#FFFFFF" />
+                )}
+                <Text style={styles.aiGenerateBtnText}>
+                  {isAiLoading
+                    ? "Drafting..."
+                    : htmlToPlainText(editorHtml).trim() && aiInstruction.trim()
+                    ? "Refine Email"
+                    : "Generate Draft"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Preview Card */}
+            {aiDraftResult && (
+              <View
+                style={[
+                  styles.aiPreviewCard,
+                  {
+                    backgroundColor: isDark ? "#1E1B4B" : "#F5F3FF",
+                    borderColor: isDark ? "#4338CA" : "#C7D2FE",
+                  },
+                ]}
+              >
+                <View style={styles.aiPreviewTitleRow}>
+                  <Text style={styles.aiPreviewTitle}>
+                    Draft Preview
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      color: isDark ? "#A5B4FC" : "#6366F1",
+                    }}
+                  >
+                    Ready to insert
+                  </Text>
+                </View>
+                <ScrollView
+                  style={styles.aiPreviewScroll}
+                  nestedScrollEnabled
+                >
+                  <Text
+                    style={[
+                      styles.aiPreviewText,
+                      { color: isDark ? "#E0E7FF" : "#1E1B4B" },
+                    ]}
+                  >
+                    {aiDraftResult}
+                  </Text>
+                </ScrollView>
+                <View style={styles.aiInsertRow}>
+                  <TouchableOpacity
+                    onPress={() => setAiDraftResult(null)}
+                    style={styles.aiDiscardBtn}
+                  >
+                    <Text
+                      style={[
+                        styles.aiDiscardBtnText,
+                        { color: colors.textMuted },
+                      ]}
+                    >
+                      Discard
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleInsertAiDraft}
+                    style={styles.aiInsertBtn}
+                  >
+                    <Check size={14} color="#FFFFFF" />
+                    <Text style={styles.aiInsertBtnText}>
+                      Insert into Email
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -2617,6 +3051,193 @@ const styles = StyleSheet.create({
   },
   rtToolbarButton: {
     padding: 4,
+  },
+  rtToolbarDivider: {
+    width: 1,
+    height: 18,
+    backgroundColor: "#CBD5E1",
+    marginHorizontal: 4,
+  },
+  aiActionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  aiActionText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  undoBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+  },
+  undoBannerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  undoBannerText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  undoBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#D8B4FE",
+  },
+  undoBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#7E22CE",
+  },
+  aiModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
+  },
+  aiModalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: Spacing.lg,
+    maxHeight: "85%",
+  },
+  aiModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: Spacing.md,
+  },
+  aiModalTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  aiModalTitle: {
+    fontSize: Typography.sizes.md,
+    fontWeight: "700",
+  },
+  aiModalSubtitle: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#6366F1",
+  },
+  aiToneRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: Spacing.md,
+  },
+  aiToneChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  aiToneChipText: {
+    fontSize: 11,
+    fontWeight: "600",
+    textTransform: "capitalize",
+  },
+  aiInputContainer: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  aiInput: {
+    fontSize: 14,
+    minHeight: 80,
+    textAlignVertical: "top",
+  },
+  aiActionRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginBottom: Spacing.md,
+  },
+  aiGenerateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#4F46E5",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  aiGenerateBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  aiPreviewCard: {
+    borderWidth: 1,
+    borderColor: "#C7D2FE",
+    borderRadius: 12,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  aiPreviewTitleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  aiPreviewTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#4F46E5",
+  },
+  aiPreviewScroll: {
+    maxHeight: 180,
+  },
+  aiPreviewText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  aiInsertRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 8,
+  },
+  aiInsertBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#059669",
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  aiInsertBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  aiDiscardBtn: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  aiDiscardBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  aiErrorText: {
+    fontSize: 12,
+    color: "#E11D48",
+    marginBottom: Spacing.sm,
   },
   rtWebView: {
     width: "100%",

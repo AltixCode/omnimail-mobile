@@ -375,6 +375,7 @@ export default function MessageDetailScreen() {
           : `Re: ${message.subject || ""}`,
         threadId: message.threadId || message.messageId || undefined,
         inReplyTo: message.messageId || undefined,
+        replyToMessageId: message.id,
       },
     });
   };
@@ -407,6 +408,7 @@ export default function MessageDetailScreen() {
           : `Re: ${message.subject || ""}`,
         threadId: message.threadId || message.messageId || undefined,
         inReplyTo: message.messageId || undefined,
+        replyToMessageId: message.id,
       },
     });
   };
@@ -421,6 +423,7 @@ export default function MessageDetailScreen() {
           ? message.subject
           : `Fwd: ${message.subject || ""}`,
         bodyText: `\n\n---------- Forwarded message ---------\nFrom: ${message.fromName || ""} <${message.fromAddress}>\nDate: ${message.date}\nSubject: ${message.subject || ""}\n\n${message.bodyText || ""}`,
+        replyToMessageId: message.id,
       },
     });
   };

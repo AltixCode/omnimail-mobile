@@ -654,6 +654,34 @@ export const api = {
     },
   },
 
+  ai: {
+    async assist(data: {
+      action: "rephrase" | "draft";
+      text?: string;
+      instruction?: string;
+      tone?: string;
+      messageId?: string;
+      threadId?: string;
+      subject?: string;
+      recipient?: string;
+      threadMessages?: Array<{
+        from: string;
+        to?: string;
+        date?: string;
+        subject?: string;
+        body: string;
+      }>;
+    }): Promise<{ success: boolean; text: string; action: string; model: string }> {
+      return await request<{ success: boolean; text: string; action: string; model: string }>(
+        "/api/ai/assist",
+        {
+          method: "POST",
+          body: JSON.stringify(data),
+        },
+      );
+    },
+  },
+
   contacts: {
     async list(query?: string, limit?: number): Promise<{ contacts: ContactEntry[]; total?: number }> {
       const q = query ? `query=${encodeURIComponent(query)}` : "";
